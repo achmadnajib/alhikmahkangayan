@@ -1,0 +1,2046 @@
+const DB_KEY = "alhikmah_attendance_v1";
+const SESSION_KEY = "alhikmah_session_v1";
+
+const roles = {
+  super_admin: "Administrator",
+  guru: "Guru",
+  wali_kelas: "Wali Kelas",
+  kepala_sekolah: "Kepala Sekolah",
+  siswa: "Siswa"
+};
+
+const statusLabels = {
+  belum: "Belum Absen",
+  hadir: "Hadir",
+  terlambat: "Terlambat",
+  izin: "Izin",
+  sakit: "Sakit",
+  alfa: "Alfa"
+};
+
+const tables = [
+  "users", "roles", "permissions", "students", "student_class_histories", "teachers",
+  "classes", "subjects", "schedules", "academic_years", "semesters",
+  "attendance_sessions", "attendance_records", "leave_requests", "attendance_logs",
+  "holidays", "lesson_hours", "settings"
+];
+
+const schemas = {
+  academic_years: {
+    title: "Tahun Ajaran",
+    subtitle: "Kelola periode tahun ajaran aktif sekolah.",
+    fields: [
+      ["name", "Tahun Ajaran", "text", true],
+      ["start_date", "Tanggal Mulai", "date", true],
+      ["end_date", "Tanggal Selesai", "date", true],
+      ["is_active", "Status Aktif", "select", true, [["true", "Aktif"], ["false", "Nonaktif"]]]
+    ],
+    columns: [["name", "Tahun Ajaran"], ["start_date", "Mulai"], ["end_date", "Selesai"], ["is_active", "Status", boolText]]
+  },
+  semesters: {
+    title: "Semester",
+    subtitle: "Semester harus terhubung ke tahun ajaran.",
+    fields: [
+      ["academic_year_id", "Tahun Ajaran", "ref:academic_years", true],
+      ["name", "Semester", "select", true, [["Ganjil", "Ganjil"], ["Genap", "Genap"]]],
+      ["start_date", "Tanggal Mulai", "date", true],
+      ["end_date", "Tanggal Selesai", "date", true],
+      ["is_active", "Status Aktif", "select", true, [["true", "Aktif"], ["false", "Nonaktif"]]]
+    ],
+    columns: [["name", "Semester"], ["academic_year_id", "Tahun Ajaran", refName("academic_years")], ["start_date", "Mulai"], ["end_date", "Selesai"], ["is_active", "Status", boolText]]
+  },
+  teachers: {
+    title: "Guru",
+    subtitle: "Data guru, akun login, dan status wali kelas.",
+    fields: [
+      ["nip", "NIP", "text", false],
+      ["name", "Nama Guru", "text", true],
+      ["phone", "Nomor HP", "text", false],
+      ["address", "Alamat", "textarea", false],
+      ["active", "Status Aktif", "select", true, [["true", "Aktif"], ["false", "Nonaktif"]]],
+      ["login_enabled", "Akun Login", "select", true, [["true", "Aktif"], ["false", "Nonaktif"]]],
+      ["is_homeroom", "Role Wali Kelas", "select", true, [["false", "Tidak"], ["true", "Ya"]]]
+    ],
+    columns: [["nip", "NIP"], ["name", "Nama"], ["phone", "HP"], ["active", "Status", boolText], ["is_homeroom", "Wali Kelas", boolText]]
+  },
+  classes: {
+    title: "Kelas",
+    subtitle: "Kelas disimpan per semester agar riwayat absensi lama aman.",
+    fields: [
+      ["name", "Nama Kelas", "text", true],
+      ["level", "Tingkat", "text", true],
+      ["major", "Jurusan", "text", false],
+      ["academic_year_id", "Tahun Ajaran", "ref:academic_years", true],
+      ["semester_id", "Semester", "ref:semesters", true],
+      ["homeroom_teacher_id", "Wali Kelas", "ref:teachers", false]
+    ],
+    columns: [["name", "Kelas"], ["level", "Tingkat"], ["major", "Jurusan"], ["academic_year_id", "Tahun Ajaran", refName("academic_years")], ["semester_id", "Semester", refName("semesters")], ["homeroom_teacher_id", "Wali Kelas", refName("teachers")]]
+  },
+  subjects: {
+    title: "Mata Pelajaran",
+    subtitle: "Kelola kode, nama, dan kelompok mapel.",
+    fields: [
+      ["code", "Kode Mapel", "text", true],
+      ["name", "Nama Mapel", "text", true],
+      ["group", "Kelompok Mapel", "text", false],
+      ["active", "Status Aktif", "select", true, [["true", "Aktif"], ["false", "Nonaktif"]]]
+    ],
+    columns: [["code", "Kode"], ["name", "Nama"], ["group", "Kelompok"], ["active", "Status", boolText]]
+  },
+  lesson_hours: {
+    title: "Jam Pelajaran",
+    subtitle: "Template jam pelajaran untuk membantu penyusunan jadwal.",
+    fields: [
+      ["name", "Nama Jam", "text", true],
+      ["start_time", "Jam Mulai", "time", true],
+      ["end_time", "Jam Selesai", "time", true]
+    ],
+    columns: [["name", "Nama"], ["start_time", "Mulai"], ["end_time", "Selesai"]]
+  },
+  schedules: {
+    title: "Jadwal Pelajaran",
+    subtitle: "Sesi absensi selalu dibuat dari jadwal aktif.",
+    fields: [
+      ["academic_year_id", "Tahun Ajaran", "ref:academic_years", true],
+      ["semester_id", "Semester", "ref:semesters", true],
+      ["class_id", "Kelas", "ref:classes", true],
+      ["subject_id", "Mata Pelajaran", "ref:subjects", true],
+      ["teacher_id", "Guru", "ref:teachers", true],
+      ["day", "Hari", "select", true, [["Senin", "Senin"], ["Selasa", "Selasa"], ["Rabu", "Rabu"], ["Kamis", "Kamis"], ["Jumat", "Jumat"], ["Sabtu", "Sabtu"], ["Minggu", "Minggu"]]],
+      ["start_time", "Jam Mulai", "time", true],
+      ["end_time", "Jam Selesai", "time", true],
+      ["room", "Ruang", "text", false],
+      ["active", "Status Aktif", "select", true, [["true", "Aktif"], ["false", "Nonaktif"]]]
+    ],
+    columns: [["day", "Hari"], ["class_id", "Kelas", refName("classes")], ["subject_id", "Mapel", refName("subjects")], ["teacher_id", "Guru", refName("teachers")], ["start_time", "Mulai"], ["end_time", "Selesai"], ["active", "Status", boolText]]
+  },
+  holidays: {
+    title: "Hari Libur",
+    subtitle: "Hari libur tidak dihitung sebagai sesi wajib dan tidak membuat alfa otomatis.",
+    fields: [
+      ["date", "Tanggal", "date", true],
+      ["name", "Nama Libur", "text", true],
+      ["type", "Jenis Libur", "select", true, [["nasional", "Nasional"], ["sekolah", "Sekolah"], ["ujian", "Ujian"], ["kegiatan", "Kegiatan"]]],
+      ["note", "Keterangan", "textarea", false]
+    ],
+    columns: [["date", "Tanggal"], ["name", "Nama"], ["type", "Jenis"], ["note", "Keterangan"]]
+  },
+  students: {
+    title: "Siswa",
+    subtitle: "Setiap siswa memiliki satu QR token unik permanen.",
+    fields: [
+      ["nis", "NIS", "text", true], ["nisn", "NISN", "text", false], ["name", "Nama Siswa", "text", true],
+      ["gender", "Jenis Kelamin", "select", true, [["L", "Laki-laki"], ["P", "Perempuan"]]],
+      ["birth_place", "Tempat Lahir", "text", false], ["birth_date", "Tanggal Lahir", "date", false],
+      ["address", "Alamat", "textarea", false], ["father_name", "Nama Ayah", "text", false], ["mother_name", "Nama Ibu", "text", false],
+      ["parent_phone", "Nomor HP Orang Tua", "text", false], ["login_enabled", "Akun Login", "select", true, [["true", "Aktif"], ["false", "Nonaktif"]]], ["photo", "Foto Siswa (URL)", "text", false],
+      ["active_class_id", "Kelas Aktif", "ref:classes", true], ["active_academic_year_id", "Tahun Ajaran Aktif", "ref:academic_years", true],
+      ["status", "Status Siswa", "select", true, [["aktif", "Aktif"], ["pindah", "Pindah"], ["lulus", "Lulus"], ["keluar", "Keluar"]]]
+    ],
+    columns: [["nis", "NIS"], ["nisn", "NISN"], ["name", "Nama"], ["active_class_id", "Kelas", refName("classes")], ["status", "Status"], ["qr_token", "QR Token"]]
+  },
+  leave_requests: {
+    title: "Izin dan Sakit",
+    subtitle: "Persetujuan izin/sakit diterapkan hanya pada sesi yang sesuai tanggal.",
+    fields: [
+      ["student_id", "Siswa", "ref:students", true], ["class_id", "Kelas Saat Pengajuan", "ref:classes", true],
+      ["academic_year_id", "Tahun Ajaran", "ref:academic_years", true], ["semester_id", "Semester", "ref:semesters", true],
+      ["leave_type", "Jenis", "select", true, [["izin", "Izin"], ["sakit", "Sakit"]]], ["start_date", "Tanggal Mulai", "date", true],
+      ["end_date", "Tanggal Selesai", "date", true], ["reason", "Alasan", "textarea", true], ["attachment", "Bukti/Surat (URL)", "text", false],
+      ["status", "Status", "select", true, [["pending", "Menunggu"], ["approved", "Disetujui"], ["rejected", "Ditolak"], ["cancelled", "Dibatalkan"]]],
+      ["approval_note", "Catatan Persetujuan", "textarea", false]
+    ],
+    columns: [["student_id", "Siswa", refName("students")], ["leave_type", "Jenis"], ["start_date", "Mulai"], ["end_date", "Selesai"], ["status", "Status"], ["approved_by", "Disetujui Oleh", refName("users")]]
+  },
+  settings: {
+    title: "Pengaturan Absensi",
+    subtitle: "Atur toleransi keterlambatan dan identitas cetak laporan.",
+    fields: [
+      ["school_name", "Nama Sekolah", "text", true],
+      ["school_website", "Website Sekolah", "text", false],
+      ["school_phone", "Nomor Telepon Sekolah", "text", false],
+      ["headmaster_name", "Nama Kepala Sekolah", "text", false],
+      ["late_tolerance_minutes", "Toleransi Terlambat (Menit)", "number", true],
+      ["parent_portal", "Portal Orang Tua", "select", true, [["false", "Nonaktif"], ["true", "Aktif"]]]
+    ],
+    columns: [["school_name", "Sekolah"], ["school_website", "Website"], ["school_phone", "Telepon"], ["headmaster_name", "Kepala Sekolah"], ["late_tolerance_minutes", "Toleransi"], ["parent_portal", "Portal Orang Tua", boolText]]
+  }
+};
+
+const state = { db: null, session: null, page: "dashboard", filters: {}, videoStream: null };
+
+document.addEventListener("DOMContentLoaded", init);
+
+function emptyDb() {
+  const db = {};
+  tables.forEach(t => db[t] = []);
+  db.roles = Object.entries(roles).map(([id, name]) => ({ id, name }));
+  db.permissions = [
+    { id: uid("perm"), role: "super_admin", scope: "all" },
+    { id: uid("perm"), role: "guru", scope: "teaching_attendance" },
+    { id: uid("perm"), role: "wali_kelas", scope: "homeroom_reports" },
+    { id: uid("perm"), role: "kepala_sekolah", scope: "all_reports" }
+  ];
+  db.settings = [{ id: uid("set"), school_name: "", school_website: "", school_phone: "", headmaster_name: "", late_tolerance_minutes: 15, parent_portal: "false", created_at: now(), updated_at: now() }];
+  seedStarterData(db);
+  return db;
+}
+
+function init() {
+  state.db = loadDb();
+  sessionStorage.removeItem(SESSION_KEY);
+  state.session = null;
+  bindAuth();
+  bindShell();
+  if (!state.db.users.length) showSetup();
+  else if (!state.session) showLogin();
+  else showApp();
+}
+
+function loadDb() {
+  const raw = localStorage.getItem(DB_KEY);
+  if (!raw) return emptyDb();
+  const db = JSON.parse(raw);
+  tables.forEach(t => db[t] ||= []);
+  removeDeprecatedRoles(db);
+  removeNonAdminEmails(db);
+  repairAdminRole(db);
+  ensureStarterAccess(db);
+  localStorage.setItem(DB_KEY, JSON.stringify(db));
+  if (!db.students.length && !db.teachers.length) {
+    seedStarterData(db);
+    localStorage.setItem(DB_KEY, JSON.stringify(db));
+  }
+  return db;
+}
+
+function removeNonAdminEmails(db) {
+  db.students.forEach(s => delete s.email);
+  db.teachers.forEach(t => delete t.email);
+  db.users.forEach(u => {
+    if (u.role !== "super_admin") delete u.email;
+  });
+}
+
+function removeDeprecatedRoles(db) {
+  db.users = db.users.filter(u => !["admin", "operator"].includes(u.role));
+  db.roles = Object.entries(roles).map(([id, name]) => ({ id, name }));
+  db.permissions = db.permissions.filter(p => !["admin", "operator"].includes(p.role));
+}
+
+function ensureStarterAccess(db) {
+  ensureHeadmasterNip(db);
+  if (db.users.some(u => u.email === "superadmin@eduattend.local")) return;
+  db.users.push({
+    id: "usr_super_admin_starter",
+    name: "Administrator EduAttend",
+    email: "superadmin@eduattend.local",
+    role: "super_admin",
+    active: "true",
+    password_hash: "6f2cb9dd8f4b65e24e1c3f3fa5bc57982349237f11abceacd45bbcb74d621c25",
+    created_at: now(),
+    updated_at: now()
+  });
+  localStorage.setItem(DB_KEY, JSON.stringify(db));
+}
+
+function ensureHeadmasterNip(db) {
+  let headTeacher = db.teachers.find(t => t.id === "t_kepsek") || db.teachers.find(t => t.nip === "197001011998031001");
+  if (!headTeacher) {
+    headTeacher = {
+      id: "t_kepsek",
+      nip: "197001011998031001",
+      name: "Drs. Hendra Saputra",
+      phone: "081234560099",
+      address: "Jl. Pendidikan Nasional No. 1",
+      active: "true",
+      login_enabled: "true",
+      is_homeroom: "false",
+      created_at: now(),
+      updated_at: now()
+    };
+    db.teachers.push(headTeacher);
+  }
+  const user = db.users.find(u => u.role === "kepala_sekolah" && (u.teacher_id === headTeacher.id || u.name === "Drs. Hendra Saputra"));
+  if (user) {
+    user.teacher_id = headTeacher.id;
+    user.nip = headTeacher.nip;
+    user.updated_at = now();
+  }
+}
+
+function seedStarterData(db) {
+  const ts = now();
+  const pass = "ff7bd97b1a7789ddd2775122fd6817f3173672da9f802ceec57f284325bf589f";
+  const adminPass = "6f2cb9dd8f4b65e24e1c3f3fa5bc57982349237f11abceacd45bbcb74d621c25";
+  db.settings = [{
+    id: "set_main",
+    school_name: "SMP Negeri EduAttend Pro",
+    school_website: "www.eduattend-pro.sch.id",
+    school_phone: "(021) 555-0199",
+    headmaster_name: "Drs. Hendra Saputra",
+    late_tolerance_minutes: 15,
+    parent_portal: "true",
+    seed_version: "starter-2027",
+    created_at: ts,
+    updated_at: ts
+  }];
+  db.academic_years = [{ id: "ay_2026_2027", name: "2026/2027", start_date: "2026-07-01", end_date: "2027-06-30", is_active: "true", created_at: ts, updated_at: ts }];
+  db.semesters = [
+    { id: "sem_ganjil_2026", academic_year_id: "ay_2026_2027", name: "Ganjil", start_date: "2026-07-01", end_date: "2026-12-20", is_active: "false", created_at: ts, updated_at: ts },
+    { id: "sem_genap_2027", academic_year_id: "ay_2026_2027", name: "Genap", start_date: "2027-01-05", end_date: "2027-06-20", is_active: "true", created_at: ts, updated_at: ts }
+  ];
+  db.teachers = [
+    { id: "t_ahmad", nip: "198201012010011001", name: "Guru Ahmad", phone: "081234560001", address: "Jl. Pendidikan No. 12", active: "true", login_enabled: "true", is_homeroom: "false", created_at: ts, updated_at: ts },
+    { id: "t_siti", nip: "198503122011012002", name: "Siti Rahmawati", phone: "081234560002", address: "Jl. Melati No. 7", active: "true", login_enabled: "true", is_homeroom: "true", created_at: ts, updated_at: ts },
+    { id: "t_budi", nip: "197912092008011003", name: "Budi Santoso", phone: "081234560003", address: "Jl. Merdeka No. 21", active: "true", login_enabled: "true", is_homeroom: "false", created_at: ts, updated_at: ts },
+    { id: "t_lina", nip: "199004202015032004", name: "Lina Marlina", phone: "081234560004", address: "Jl. Anggrek No. 9", active: "true", login_enabled: "true", is_homeroom: "false", created_at: ts, updated_at: ts },
+    { id: "t_kepsek", nip: "197001011998031001", name: "Drs. Hendra Saputra", phone: "081234560099", address: "Jl. Pendidikan Nasional No. 1", active: "true", login_enabled: "true", is_homeroom: "false", created_at: ts, updated_at: ts }
+  ];
+  db.classes = [
+    { id: "cls_8a_genap", name: "8A", level: "8", major: "Reguler", academic_year_id: "ay_2026_2027", semester_id: "sem_genap_2027", homeroom_teacher_id: "t_siti", created_at: ts, updated_at: ts },
+    { id: "cls_7a_genap", name: "7A", level: "7", major: "Reguler", academic_year_id: "ay_2026_2027", semester_id: "sem_genap_2027", homeroom_teacher_id: "t_budi", created_at: ts, updated_at: ts }
+  ];
+  db.subjects = [
+    { id: "sub_math", code: "MATH", name: "Matematika", group: "Wajib", active: "true", created_at: ts, updated_at: ts },
+    { id: "sub_bindo", code: "BIN", name: "Bahasa Indonesia", group: "Wajib", active: "true", created_at: ts, updated_at: ts },
+    { id: "sub_ipa", code: "IPA", name: "IPA", group: "Wajib", active: "true", created_at: ts, updated_at: ts },
+    { id: "sub_bing", code: "ENG", name: "Bahasa Inggris", group: "Wajib", active: "true", created_at: ts, updated_at: ts }
+  ];
+  db.lesson_hours = [
+    { id: "lh_1", name: "Jam 1-2", start_time: "07:00", end_time: "08:30", created_at: ts, updated_at: ts },
+    { id: "lh_3", name: "Jam 3-4", start_time: "08:45", end_time: "10:15", created_at: ts, updated_at: ts },
+    { id: "lh_5", name: "Jam 5-6", start_time: "10:30", end_time: "12:00", created_at: ts, updated_at: ts }
+  ];
+  db.schedules = [
+    { id: "sch_8a_math_thu", academic_year_id: "ay_2026_2027", semester_id: "sem_genap_2027", class_id: "cls_8a_genap", subject_id: "sub_math", teacher_id: "t_ahmad", day: "Kamis", start_time: "07:00", end_time: "08:30", room: "Ruang 8A", active: "true", created_at: ts, updated_at: ts },
+    { id: "sch_8a_bindo_thu", academic_year_id: "ay_2026_2027", semester_id: "sem_genap_2027", class_id: "cls_8a_genap", subject_id: "sub_bindo", teacher_id: "t_siti", day: "Kamis", start_time: "08:45", end_time: "10:15", room: "Ruang 8A", active: "true", created_at: ts, updated_at: ts },
+    { id: "sch_8a_ipa_fri", academic_year_id: "ay_2026_2027", semester_id: "sem_genap_2027", class_id: "cls_8a_genap", subject_id: "sub_ipa", teacher_id: "t_budi", day: "Jumat", start_time: "07:00", end_time: "08:30", room: "Lab IPA", active: "true", created_at: ts, updated_at: ts },
+    { id: "sch_7a_bing_thu", academic_year_id: "ay_2026_2027", semester_id: "sem_genap_2027", class_id: "cls_7a_genap", subject_id: "sub_bing", teacher_id: "t_lina", day: "Kamis", start_time: "07:00", end_time: "08:30", room: "Ruang 7A", active: "true", created_at: ts, updated_at: ts }
+  ];
+  db.holidays = [
+    { id: "hol_2027_01_01", date: "2027-01-01", name: "Tahun Baru", type: "nasional", note: "Libur nasional", created_at: ts, updated_at: ts },
+    { id: "hol_2027_03_19", date: "2027-03-19", name: "Kegiatan Sekolah", type: "kegiatan", note: "Kegiatan yayasan", created_at: ts, updated_at: ts }
+  ];
+  const studentNames = [
+    "Adryan Syahputra", "Bunga Amelia", "Citra Lestari", "Dafa Pratama", "Eka Wulandari", "Farhan Maulana", "Gita Ananda",
+    "Hafiz Ramadhan", "Intan Permata", "Joko Firmansyah", "Karin Oktavia", "Lukman Hakim", "Maya Salsabila", "Naufal Rizky",
+    "Olivia Putri", "Prasetyo Nugroho", "Qori Azzahra", "Rafi Alfarizi", "Salsa Nuraini", "Tegar Wicaksono", "Ulfa Maharani",
+    "Vino Ardana", "Wulan Puspita", "Yusuf Ibrahim", "Zahra Aulia", "Aldi Saputra", "Nadia Kirana", "Rizki Fadillah"
+  ];
+  db.students = studentNames.map((name, i) => {
+    const no = String(i + 1).padStart(3, "0");
+    return {
+      id: `stu_8a_${no}`,
+      nis: `242508${no}`,
+      nisn: `0098765${String(430 + i)}`,
+      name,
+      gender: i % 2 ? "P" : "L",
+      birth_place: "Kota Digital",
+      birth_date: `2013-${String((i % 12) + 1).padStart(2, "0")}-${String((i % 26) + 1).padStart(2, "0")}`,
+      address: `Jl. Siswa No. ${i + 1}`,
+      father_name: `Ayah ${name.split(" ")[0]}`,
+      mother_name: `Ibu ${name.split(" ")[0]}`,
+      parent_phone: `08130000${String(i + 1).padStart(4, "0")}`,
+      login_enabled: "true",
+      photo: "",
+      active_class_id: "cls_8a_genap",
+      active_academic_year_id: "ay_2026_2027",
+      status: "aktif",
+      qr_token: `QR-EDUATTEND-8A-${no}`,
+      created_at: ts,
+      updated_at: ts
+    };
+  });
+  db.student_class_histories = db.students.map(s => ({ id: `hist_${s.id}`, student_id: s.id, class_id: "cls_8a_genap", academic_year_id: "ay_2026_2027", semester_id: "sem_genap_2027", status: "aktif", start_date: "2027-01-05", end_date: "", created_at: ts }));
+  db.leave_requests = [{
+    id: "leave_001",
+    student_id: "stu_8a_023",
+    class_id: "cls_8a_genap",
+    academic_year_id: "ay_2026_2027",
+    semester_id: "sem_genap_2027",
+    leave_type: "izin",
+    start_date: today(),
+    end_date: today(),
+    reason: "Keperluan keluarga yang sudah disetujui wali kelas.",
+    attachment: "",
+    status: "approved",
+    requested_by: "usr_super_admin_starter",
+    approved_by: "usr_wali_siti",
+    approved_at: ts,
+    approval_note: "Disetujui wali kelas.",
+    created_at: ts,
+    updated_at: ts
+  }];
+  db.attendance_sessions = [{
+    id: "ses_8a_math_today",
+    schedule_id: "sch_8a_math_thu",
+    teacher_id: "t_ahmad",
+    class_id: "cls_8a_genap",
+    subject_id: "sub_math",
+    academic_year_id: "ay_2026_2027",
+    semester_id: "sem_genap_2027",
+    date: today(),
+    start_time: "07:00",
+    end_time: "08:30",
+    status: "open",
+    opened_by: "usr_guru_ahmad",
+    closed_by: "",
+    opened_at: ts,
+    closed_at: ""
+  }];
+  const records = [];
+  db.students.slice(0, 20).forEach((s, i) => records.push(starterRecord(s, i, i < 10 ? "07:0" + i : "07:" + i, "hadir", "qr", ts)));
+  db.students.slice(20, 22).forEach((s, i) => records.push(starterRecord(s, i + 20, `07:${20 + i}`, "terlambat", "qr", ts)));
+  records.push(starterRecord(db.students[22], 22, "", "izin", "leave_auto", ts));
+  db.attendance_records = records;
+  db.attendance_logs = [
+    { id: "log_001", attendance_record_id: "rec_022", student_id: "stu_8a_023", old_status: "belum", new_status: "izin", changed_by: "usr_wali_siti", reason: "Izin disetujui sebelum sesi dimulai.", created_at: ts }
+  ];
+  db.users = [
+    { id: "usr_super_admin_starter", name: "Administrator EduAttend", email: "superadmin@eduattend.local", role: "super_admin", active: "true", password_hash: adminPass, created_at: ts, updated_at: ts },
+    { id: "usr_kepsek_starter", name: "Drs. Hendra Saputra", role: "kepala_sekolah", teacher_id: "t_kepsek", nip: "197001011998031001", active: "true", password_hash: pass, created_at: ts, updated_at: ts },
+    { id: "usr_guru_ahmad", name: "Guru Ahmad", role: "guru", teacher_id: "t_ahmad", active: "true", password_hash: pass, created_at: ts, updated_at: ts },
+    { id: "usr_wali_siti", name: "Siti Rahmawati", role: "wali_kelas", teacher_id: "t_siti", active: "true", password_hash: pass, created_at: ts, updated_at: ts },
+    { id: "usr_guru_budi", name: "Budi Santoso", role: "guru", teacher_id: "t_budi", active: "true", password_hash: pass, created_at: ts, updated_at: ts },
+    { id: "usr_guru_lina", name: "Lina Marlina", role: "guru", teacher_id: "t_lina", active: "true", password_hash: pass, created_at: ts, updated_at: ts },
+    ...db.students.map(s => ({ id: `usr_${s.id}`, name: s.name, role: "siswa", student_id: s.id, active: "true", password_hash: pass, created_at: ts, updated_at: ts }))
+  ];
+}
+
+function starterRecord(student, index, scanTime, status, inputMethod, ts) {
+  return {
+    id: `rec_${String(index).padStart(3, "0")}`,
+    session_id: "ses_8a_math_today",
+    student_id: student.id,
+    class_id: "cls_8a_genap",
+    subject_id: "sub_math",
+    teacher_id: "t_ahmad",
+    schedule_id: "sch_8a_math_thu",
+    academic_year_id: "ay_2026_2027",
+    semester_id: "sem_genap_2027",
+    date: today(),
+    start_time: "07:00",
+    end_time: "08:30",
+    status,
+    scan_time: scanTime,
+    input_method: inputMethod,
+    note: status === "izin" ? "Izin otomatis dari pengajuan disetujui." : "Data awal siap coba.",
+    created_by: inputMethod === "qr" ? "usr_guru_ahmad" : "usr_wali_siti",
+    updated_by: inputMethod === "qr" ? "usr_guru_ahmad" : "usr_wali_siti",
+    created_at: ts,
+    updated_at: ts
+  };
+}
+
+function repairAdminRole(db) {
+  if (!db.users?.length || db.users.some(u => u.role === "super_admin" && u.active !== "false")) return;
+  const candidate = db.users.find(u => !u.teacher_id) || db.users[0];
+  candidate.role = "super_admin";
+  candidate.active = "true";
+  candidate.updated_at = now();
+  localStorage.setItem(DB_KEY, JSON.stringify(db));
+}
+
+function saveDb() { localStorage.setItem(DB_KEY, JSON.stringify(state.db)); }
+function loadSession() { return JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null"); }
+function saveSession(session) { sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); state.session = session; }
+function now() { return new Date().toISOString(); }
+function today() { return new Date().toISOString().slice(0, 10); }
+function uid(prefix) { return `${prefix}_${crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2)}`; }
+async function hashPassword(password) {
+  const data = new TextEncoder().encode(password);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function bindAuth() {
+  byId("login-form").querySelector('[name="role"]').addEventListener("change", updateLoginIdentifierHint);
+  updateLoginIdentifierHint();
+  byId("setup-form").addEventListener("submit", async e => {
+    e.preventDefault();
+    const fd = formData(e.target);
+    const user = { id: uid("usr"), name: fd.name, email: fd.email, role: "super_admin", password_hash: await hashPassword(fd.password), created_at: now(), updated_at: now(), active: "true" };
+    state.db.users.push(user);
+    state.db.settings[0].school_name = fd.schoolName;
+    saveDb();
+    saveSession({ userId: user.id });
+    toast("Administrator dibuat.", "ok");
+    showApp();
+  });
+  byId("login-form").addEventListener("submit", async e => {
+    e.preventDefault();
+    const fd = formData(e.target);
+    const user = findLoginUser(fd.role, fd.email);
+    const needsPassword = loginNeedsPassword(fd.role);
+    if (!user || user.active === "false") return toast("Identitas login tidak valid.", "error");
+    if (needsPassword && user.password_hash !== await hashPassword(fd.password)) return toast("Password salah.", "error");
+    if (!canLoginAsRole(user, fd.role)) return toast(`Akun ini terdaftar sebagai ${roles[user.role]}. Pilih role yang sesuai.`, "error");
+    state.page = landingPageForRole(fd.role);
+    saveSession({ userId: user.id, role: fd.role });
+    showApp();
+  });
+}
+
+function updateLoginIdentifierHint() {
+  const role = byId("login-form")?.querySelector('[name="role"]')?.value;
+  const label = byId("login-id-label");
+  const input = byId("login-identifier");
+  if (!label || !input) return;
+  if (role === "super_admin") {
+    label.textContent = "Email";
+    input.placeholder = "Masukkan email administrator";
+    byId("login-password-field")?.classList.remove("hidden");
+    byId("login-password").required = true;
+  } else if (role === "siswa") {
+    label.textContent = "NISN";
+    input.placeholder = "Masukkan NISN siswa";
+    byId("login-password-field")?.classList.add("hidden");
+    byId("login-password").required = false;
+    byId("login-password").value = "";
+  } else {
+    label.textContent = "NIP";
+    input.placeholder = "Masukkan NIP";
+    byId("login-password-field")?.classList.add("hidden");
+    byId("login-password").required = false;
+    byId("login-password").value = "";
+  }
+}
+
+function loginNeedsPassword(role) {
+  return role === "super_admin";
+}
+
+function findLoginUser(role, identifier) {
+  const value = String(identifier || "").trim().toLowerCase();
+  if (role === "super_admin") {
+    return state.db.users.find(u => u.email?.toLowerCase() === value);
+  }
+  if (role === "siswa") {
+    const student = state.db.students.find(s => s.nisn?.toLowerCase() === value && !s.deleted_at);
+    return student ? state.db.users.find(u => u.student_id === student.id) : null;
+  }
+  if (["guru", "wali_kelas", "kepala_sekolah"].includes(role)) {
+    const teacher = state.db.teachers.find(t => t.nip?.toLowerCase() === value && !t.deleted_at);
+    const linked = teacher ? state.db.users.find(u => u.teacher_id === teacher.id && u.role === role) : null;
+    if (linked) return linked;
+    if (role === "guru" && teacher && teacherHasTeachingSchedule(teacher.id)) {
+      return state.db.users.find(u => u.teacher_id === teacher.id && u.role === "wali_kelas") || null;
+    }
+    if (role === "kepala_sekolah") return state.db.users.find(u => u.role === "kepala_sekolah" && (u.nip?.toLowerCase() === value || u.email?.toLowerCase() === value));
+  }
+  return null;
+}
+
+function canLoginAsRole(user, role) {
+  if (user.role === role) return true;
+  return role === "guru" && user.role === "wali_kelas" && teacherHasTeachingSchedule(user.teacher_id);
+}
+
+function teacherHasTeachingSchedule(teacherId) {
+  return state.db.schedules.some(s => s.teacher_id === teacherId && s.active !== "false");
+}
+
+function bindShell() {
+  byId("logout").onclick = () => {
+    sessionStorage.removeItem(SESSION_KEY);
+    stopCamera();
+    state.session = null;
+    showLogin();
+  };
+  byId("menu-toggle").onclick = () => document.querySelector(".sidebar").classList.toggle("open");
+}
+
+function showSetup() { byId("auth").classList.remove("hidden"); byId("app").classList.add("hidden"); byId("setup-form").classList.remove("hidden"); byId("login-form").classList.add("hidden"); }
+function showLogin() { byId("auth").classList.remove("hidden"); byId("app").classList.add("hidden"); byId("setup-form").classList.add("hidden"); byId("login-form").classList.remove("hidden"); applySchoolBrand(); }
+function showApp() {
+  byId("auth").classList.add("hidden");
+  byId("app").classList.remove("hidden");
+  applySchoolBrand();
+  const user = currentUser();
+  byId("active-user").textContent = user.name;
+  byId("active-role").textContent = roles[user.role];
+  renderMenu();
+  navigate(state.page);
+}
+
+function applySchoolBrand() {
+  const name = state.db.settings?.[0]?.school_name || "EduAttend Pro";
+  document.querySelectorAll(".login-brand strong, .brand strong").forEach(el => {
+    el.textContent = name;
+  });
+}
+
+function currentUser() {
+  const user = state.db.users.find(u => u.id === state.session?.userId);
+  if (!user) return user;
+  return state.session?.role && user.role !== state.session.role ? { ...user, original_role: user.role, role: state.session.role } : user;
+}
+function landingPageForRole(role) {
+  return ({
+    super_admin: "dashboard",
+    guru: "attendance",
+    wali_kelas: "leave_requests",
+    kepala_sekolah: "reports",
+    siswa: "dashboard"
+  })[role] || "dashboard";
+}
+function canDelete() { return currentUser().role === "super_admin"; }
+function canEditMaster() { return currentUser().role === "super_admin"; }
+function canReport() { return ["super_admin", "guru", "wali_kelas", "kepala_sekolah"].includes(currentUser().role); }
+function canCreateLeaveRequest(table) { return table === "leave_requests" && ["super_admin", "guru", "wali_kelas"].includes(currentUser().role); }
+function canApproveLeaveFor(classId) {
+  const user = currentUser();
+  if (user.role === "super_admin") return true;
+  if (user.role !== "wali_kelas") return false;
+  return state.db.classes.some(c => c.id === classId && c.homeroom_teacher_id === user.teacher_id);
+}
+function canAccess(page) { return menuItemsForCurrentUser().some(([id]) => id === page); }
+
+function renderMenu() {
+  const items = menuItemsForCurrentUser();
+  byId("menu").dataset.role = currentUser().role;
+  byId("menu").innerHTML = items.map(([id, label]) => `<button data-page="${id}" class="${state.page === id ? "active" : ""}">${label}</button>`).join("");
+  byId("menu").querySelectorAll("button").forEach(btn => btn.onclick = () => navigate(btn.dataset.page));
+}
+
+function menuItemsForCurrentUser() {
+  const user = currentUser();
+  return [
+    ["dashboard", "Dashboard", true],
+    ["attendance", "Sesi & Scan QR", ["super_admin", "guru"].includes(user.role)],
+    ["my_qr", "QR Saya", user.role === "siswa"],
+    ["history", "History", ["super_admin", "guru", "wali_kelas", "kepala_sekolah", "siswa"].includes(user.role)],
+    ["students", "Siswa", canEditMaster() || user.role === "wali_kelas"],
+    ["teachers", "Guru", canEditMaster()],
+    ["classes", "Kelas", canEditMaster()],
+    ["subjects", "Mata Pelajaran", canEditMaster()],
+    ["schedules", "Jadwal Pelajaran", canEditMaster() || user.role === "guru"],
+    ["academic_years", "Tahun Ajaran", canEditMaster()],
+    ["semesters", "Semester", canEditMaster()],
+    ["lesson_hours", "Jam Pelajaran", canEditMaster()],
+    ["holidays", "Hari Libur", canEditMaster()],
+    ["leave_requests", "Izin & Sakit", ["super_admin", "guru", "wali_kelas"].includes(user.role)],
+    ["reports", "Laporan", canReport()],
+    ["users", "Pengguna & Role", user.role === "super_admin"],
+    ["settings", "Pengaturan", user.role === "super_admin"],
+    ["profile", "Profil Saya", user.role !== "siswa"]
+  ].filter(i => i[2]);
+}
+
+function navigate(page) {
+  stopCamera();
+  if (page === "my_qr") return showMyQr();
+  if (!canAccess(page)) page = landingPageForRole(currentUser().role);
+  state.page = page;
+  document.querySelector(".sidebar").classList.remove("open");
+  renderMenu();
+  const titles = { dashboard: "Dashboard", attendance: "Scan", history: "History", reports: "Reports", users: "Pengguna & Role", profile: "Profile" };
+  const schema = schemas[page];
+  byId("page-title").textContent = titles[page] || schema?.title || "Aplikasi";
+  byId("page-subtitle").textContent = page === "attendance" ? "Buka jadwal aktif terlebih dahulu sebelum scan QR siswa." : "";
+  renderQuickTools();
+  if (page === "dashboard") return renderDashboard();
+  if (page === "attendance") return renderAttendance();
+  if (page === "history") return renderHistory();
+  if (page === "reports") return renderReports();
+  if (page === "users") return renderUsers();
+  if (page === "profile") return renderProfile();
+  return renderCrud(page);
+}
+
+function renderQuickTools() {
+  const user = currentUser();
+  const tools = [
+    ["dashboard", "Dashboard", "▦", canAccess("dashboard")],
+    ["attendance", user.role === "siswa" ? "QR Saya" : "Scan", "▩", user.role === "siswa" ? true : canAccess("attendance")],
+    ["reports", "Reports", "▤", canAccess("reports")],
+    ["profile", "Profile", "♙", canAccess("profile")]
+  ].filter(t => t[3]);
+  byId("quick-tools").innerHTML = tools.map(([page, label, icon]) => `<button class="${state.page === page ? "active" : ""}" data-quick="${page}" title="${label}"><span>${icon}</span>${label}</button>`).join("");
+  byId("quick-tools").querySelectorAll("button").forEach(btn => btn.onclick = () => {
+    if (btn.dataset.quick === "attendance" && currentUser().role === "siswa") return showMyQr();
+    navigate(btn.dataset.quick);
+  });
+}
+
+function renderDashboard() {
+  const role = currentUser().role;
+  if (role === "siswa") return renderStudentDashboard();
+  if (role === "guru") return renderTeacherDashboard();
+  if (role === "wali_kelas") return renderHomeroomDashboard();
+  if (role === "kepala_sekolah") return renderHeadmasterDashboard();
+  const date = today();
+  const recordsToday = state.db.attendance_records.filter(r => r.date === date);
+  const stat = s => recordsToday.filter(r => r.status === s).length;
+  const activeSession = state.db.attendance_sessions.find(s => s.date === date && s.status === "open") || state.db.attendance_sessions.find(s => s.date === date);
+  const classCount = activeSession ? studentsInClass(activeSession.class_id).length : state.db.students.filter(s => s.status === "aktif").length;
+  const presentCount = stat("hadir");
+  const lateCount = stat("terlambat");
+  const leaveCount = stat("izin");
+  const sickCount = stat("sakit");
+  const absentPending = Math.max(0, classCount - presentCount - lateCount - leaveCount - sickCount - stat("alfa"));
+  byId("view").innerHTML = `
+    <section class="mobile-dashboard">
+      <article class="session-hero">
+        <span>Active Session</span>
+        <h2>${activeSession ? `${refName("subjects")(activeSession.subject_id)} - Kelas ${refName("classes")(activeSession.class_id)}` : "Belum Ada Sesi Aktif"}</h2>
+        <div><b>♙</b> ${activeSession ? refName("teachers")(activeSession.teacher_id) : "Pilih jadwal"} <b>◷</b> ${activeSession ? `${activeSession.start_time} - ${activeSession.end_time}` : "Buka sesi absensi"}</div>
+      </article>
+      <article class="total-card">
+        <span>Total Students</span>
+        <strong>${classCount}</strong>
+        <small>${activeSession ? `Session ID: #${activeSession.id.slice(-10).toUpperCase()}` : `${state.db.students.filter(s => s.status === "aktif").length} siswa aktif`}</small>
+      </article>
+      <div class="mini-stats">
+        <article><strong class="ok-text">${presentCount}</strong><span>Hadir</span></article>
+        <article><strong>${lateCount}</strong><span>Terlambat</span></article>
+        <article><strong>${leaveCount}</strong><span>Izin</span></article>
+        <article><strong class="danger-text">${sickCount}</strong><span>Sakit</span></article>
+      </div>
+      <article class="pending-card"><strong>${absentPending}</strong><span>Belum Absen</span></article>
+    </section>
+    <section class="cards desktop-only">
+      ${card("Siswa Aktif", state.db.students.filter(s => s.status === "aktif").length)}
+      ${card("Guru Aktif", state.db.teachers.filter(t => t.active !== "false").length)}
+      ${card("Kelas Aktif", state.db.classes.length)}
+      ${card("Sesi Hari Ini", state.db.attendance_sessions.filter(s => s.date === date).length)}
+    </section>
+    <section class="panel">
+      <div class="panel-head"><div><h2>Ringkasan Operasional</h2><p class="muted">Dashboard mengikuti data real yang sudah dimasukkan.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Area</th><th>Informasi</th></tr></thead><tbody>
+        <tr><td>Guru</td><td>${state.db.schedules.filter(s => s.active !== "false").length} jadwal aktif, ${state.db.attendance_sessions.filter(s => s.status === "open").length} sesi berjalan.</td></tr>
+        <tr><td>Wali Kelas</td><td>${state.db.leave_requests.filter(l => l.status === "pending").length} pengajuan izin menunggu persetujuan.</td></tr>
+        <tr><td>Kepala Sekolah</td><td>Laporan harian, bulanan, semester, kelas, dan mapel tersedia di menu Laporan.</td></tr>
+      </tbody></table></div>
+    </section>`;
+}
+
+function renderStudentDashboard() {
+  const user = currentUser();
+  const student = state.db.students.find(s => s.id === user.student_id);
+  if (!student) return renderProfile();
+  const cls = findById("classes", student.active_class_id);
+  const records = state.db.attendance_records.filter(r => r.student_id === student.id);
+  const todayRecords = records.filter(r => r.date === today());
+  const totals = attendanceTotals(records);
+  const pct = totals.total ? (((totals.hadir + totals.terlambat) / totals.total) * 100).toFixed(1) : "0.0";
+  const schedules = state.db.schedules.filter(s => s.class_id === student.active_class_id && s.active !== "false");
+  byId("view").innerHTML = `
+    <section class="student-home">
+      <article class="student-card">
+        <div>
+          <span>Student Portal</span>
+          <h2>${escapeHtml(student.name)}</h2>
+          <p>${escapeHtml(student.nis)} / ${escapeHtml(student.nisn || "-")} · Kelas ${escapeHtml(displayName("classes", cls))}</p>
+        </div>
+        <div class="student-identity">
+          <small>Identitas Login</small>
+          <strong>${escapeHtml(student.nisn || "-")}</strong>
+          <em>QR tersedia melalui tombol bawah</em>
+        </div>
+      </article>
+      <div class="mini-stats">
+        <article><strong class="ok-text">${totals.hadir}</strong><span>Hadir</span></article>
+        <article><strong>${totals.terlambat}</strong><span>Terlambat</span></article>
+        <article><strong>${totals.izin}</strong><span>Izin</span></article>
+        <article><strong class="danger-text">${totals.alfa}</strong><span>Alfa</span></article>
+      </div>
+      <article class="total-card student-percent">
+        <span>Persentase Kehadiran</span>
+        <strong>${pct}%</strong>
+        <small>${totals.total} sesi tercatat</small>
+      </article>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><div><h2>Status Hari Ini</h2><p class="muted">Absensi hanya tercatat jika guru membuka sesi jadwal.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Mapel</th><th>Guru</th><th>Jam</th><th>Status</th></tr></thead><tbody>
+        ${todayRecords.map(r => `<tr><td>${refName("subjects")(r.subject_id)}</td><td>${refName("teachers")(r.teacher_id)}</td><td>${escapeHtml(r.start_time)} - ${escapeHtml(r.end_time)}</td><td>${badge(r.status)}</td></tr>`).join("") || emptyRow(4)}
+      </tbody></table></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><div><h2>Jadwal Kelas</h2><p class="muted">QR kamu permanen dan hanya berfungsi sebagai identitas siswa.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Hari</th><th>Mapel</th><th>Guru</th><th>Jam</th><th>Ruang</th></tr></thead><tbody>
+        ${schedules.map(s => `<tr><td>${escapeHtml(s.day)}</td><td>${refName("subjects")(s.subject_id)}</td><td>${refName("teachers")(s.teacher_id)}</td><td>${escapeHtml(s.start_time)} - ${escapeHtml(s.end_time)}</td><td>${escapeHtml(s.room || "-")}</td></tr>`).join("") || emptyRow(5)}
+      </tbody></table></div>
+    </section>`;
+}
+
+function showMyQr() {
+  const user = currentUser();
+  const student = state.db.students.find(s => s.id === user.student_id);
+  if (!student) return toast("Data siswa tidak ditemukan.", "error");
+  showQrCards([student]);
+}
+
+function renderTeacherDashboard() {
+  const user = currentUser();
+  const teacher = state.db.teachers.find(t => t.id === user.teacher_id);
+  const date = today();
+  const day = dayName(new Date());
+  const schedules = state.db.schedules.filter(s => s.teacher_id === teacher?.id && s.day === day && s.active !== "false");
+  const sessions = state.db.attendance_sessions.filter(s => s.teacher_id === teacher?.id && s.date === date);
+  const records = state.db.attendance_records.filter(r => r.teacher_id === teacher?.id && r.date === date);
+  const totals = attendanceTotals(records);
+  byId("view").innerHTML = `
+    <section class="mobile-dashboard">
+      <article class="session-hero">
+        <span>Teacher Dashboard</span>
+        <h2>${escapeHtml(teacher?.name || user.name)}</h2>
+        <div><b>▦</b> ${schedules.length} jadwal hari ini <b>◷</b> ${sessions.filter(s => s.status === "open").length} sesi berjalan</div>
+      </article>
+      <div class="mini-stats">
+        <article><strong class="ok-text">${totals.hadir}</strong><span>Hadir</span></article>
+        <article><strong>${totals.terlambat}</strong><span>Terlambat</span></article>
+        <article><strong>${totals.izin}</strong><span>Izin</span></article>
+        <article><strong class="danger-text">${totals.alfa}</strong><span>Alfa</span></article>
+      </div>
+      <article class="pending-card"><strong>${sessions.filter(s => s.status === "open").length}</strong><span>Sesi Aktif</span></article>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><div><h2>Jadwal Mengajar Hari Ini</h2><p class="muted">Buka sesi dari jadwal, lalu scan QR siswa.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Kelas</th><th>Mapel</th><th>Jam</th><th>Status</th></tr></thead><tbody>
+        ${schedules.map(s => {
+          const ses = state.db.attendance_sessions.find(x => x.schedule_id === s.id && x.date === date && x.status !== "cancelled");
+          return `<tr><td>${refName("classes")(s.class_id)}</td><td>${refName("subjects")(s.subject_id)}</td><td>${escapeHtml(s.start_time)} - ${escapeHtml(s.end_time)}</td><td>${ses ? badge(ses.status) : "Belum dibuka"}</td></tr>`;
+        }).join("") || emptyRow(4)}
+      </tbody></table></div>
+    </section>`;
+}
+
+function renderHomeroomDashboard() {
+  const user = currentUser();
+  const teacher = state.db.teachers.find(t => t.id === user.teacher_id);
+  const classes = state.db.classes.filter(c => c.homeroom_teacher_id === teacher?.id);
+  const ids = new Set(classes.map(c => c.id));
+  const students = state.db.students.filter(s => ids.has(s.active_class_id) && s.status === "aktif");
+  const records = state.db.attendance_records.filter(r => ids.has(r.class_id));
+  const totals = attendanceTotals(records);
+  byId("view").innerHTML = `
+    <section class="mobile-dashboard">
+      <article class="session-hero"><span>Homeroom</span><h2>${escapeHtml(classes.map(c => c.name).join(", ") || "Belum Ada Kelas")}</h2><div><b>♙</b> ${students.length} siswa aktif <b>▣</b> ${state.db.leave_requests.filter(l => ids.has(l.class_id) && l.status === "pending").length} izin menunggu</div></article>
+      <div class="mini-stats">
+        <article><strong class="ok-text">${totals.hadir}</strong><span>Hadir</span></article>
+        <article><strong>${totals.terlambat}</strong><span>Terlambat</span></article>
+        <article><strong>${totals.izin}</strong><span>Izin</span></article>
+        <article><strong class="danger-text">${totals.alfa}</strong><span>Alfa</span></article>
+      </div>
+    </section>
+    <section class="panel"><div class="panel-head"><div><h2>Siswa Perlu Perhatian</h2><p class="muted">Diurutkan dari jumlah alfa dan terlambat tertinggi.</p></div></div>${attentionTable(students, records)}</section>`;
+}
+
+function renderHeadmasterDashboard() {
+  const records = state.db.attendance_records;
+  const totals = attendanceTotals(records);
+  const pct = totals.total ? (((totals.hadir + totals.terlambat) / totals.total) * 100).toFixed(1) : "0.0";
+  byId("view").innerHTML = `
+    <section class="cards">
+      ${card("Siswa Aktif", state.db.students.filter(s => s.status === "aktif").length)}
+      ${card("Guru Aktif", state.db.teachers.filter(t => t.active !== "false").length)}
+      ${card("Kelas", state.db.classes.length)}
+      ${card("Kehadiran", `${pct}%`)}
+    </section>
+    <section class="mobile-dashboard">
+      <article class="total-card"><span>Rekap Seluruh Sekolah</span><strong>${pct}%</strong><small>${totals.total} sesi tercatat</small></article>
+      <div class="mini-stats">
+        <article><strong class="ok-text">${totals.hadir}</strong><span>Hadir</span></article>
+        <article><strong>${totals.terlambat}</strong><span>Terlambat</span></article>
+        <article><strong>${totals.izin}</strong><span>Izin</span></article>
+        <article><strong class="danger-text">${totals.alfa}</strong><span>Alfa</span></article>
+      </div>
+    </section>`;
+}
+
+function attendanceTotals(records) {
+  return records.reduce((a, r) => {
+    if (a[r.status] !== undefined) a[r.status]++;
+    a.total++;
+    return a;
+  }, { hadir: 0, terlambat: 0, izin: 0, sakit: 0, alfa: 0, total: 0 });
+}
+
+function attentionTable(students, records) {
+  const rows = students.map(st => {
+    const t = attendanceTotals(records.filter(r => r.student_id === st.id));
+    return { st, score: t.alfa * 2 + t.terlambat, ...t };
+  }).sort((a, b) => b.score - a.score).slice(0, 12).map((r, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(r.st.name)}</td><td>${r.terlambat}</td><td>${r.alfa}</td><td>${r.score ? "Perlu pembinaan" : "Baik"}</td></tr>`).join("");
+  return `<div class="table-wrap"><table><thead><tr><th>No</th><th>Siswa</th><th>Terlambat</th><th>Alfa</th><th>Keterangan</th></tr></thead><tbody>${rows || emptyRow(5)}</tbody></table></div>`;
+}
+
+function card(label, value) { return `<article class="card"><span>${label}</span><strong>${value}</strong></article>`; }
+
+function renderCrud(table) {
+  const schema = schemas[table];
+  if (!schema) return;
+  const canWrite = table === "settings" ? currentUser().role === "super_admin" : canEditMaster() || canCreateLeaveRequest(table);
+  const data = visibleRows(table);
+  const rows = data.map(row => `<tr>${schema.columns.map(([key, , fmt]) => `<td>${fmt ? fmt(row[key], row) : escapeHtml(row[key] ?? "")}</td>`).join("")}<td class="row-actions">${crudActions(table, row, canWrite)}</td></tr>`).join("");
+  byId("view").innerHTML = `
+    <section class="panel">
+      <div class="panel-head">
+        <div><h2>${schema.title}</h2><p class="muted">${schema.subtitle}</p></div>
+        <div class="actions">
+          ${canWrite ? `<button class="primary" data-add>Tambah</button>` : ""}
+          ${canEditMaster() ? `<button class="secondary" data-import>Import CSV</button>` : ""}
+          <button class="secondary" data-export>Export CSV</button>
+          <button class="secondary" data-excel>Export Excel</button>
+          <button class="secondary" data-pdf>Cetak/PDF</button>
+          ${table === "students" && canEditMaster() ? `<button class="secondary" data-print-class>Cetak QR Massal</button><button class="secondary" data-promote>Naik Kelas Massal</button>` : ""}
+        </div>
+      </div>
+      <div class="filters"><input data-search placeholder="Cari data..." value="${escapeHtml(state.filters[table] || "")}"></div>
+      <div class="table-wrap"><table><thead><tr>${schema.columns.map(c => `<th>${c[1]}</th>`).join("")}<th>Aksi</th></tr></thead><tbody>${rows || emptyRow(schema.columns.length + 1)}</tbody></table></div>
+    </section>`;
+  bindCrud(table);
+}
+
+function crudActions(table, row, canWrite) {
+  const parts = [];
+  if (table === "students") parts.push(`<button class="secondary" data-qr="${row.id}">QR</button>`);
+  if (table === "leave_requests" && row.status === "pending" && canApproveLeaveFor(row.class_id)) parts.push(`<button class="secondary" data-approve="${row.id}">Setujui</button>`);
+  if (canWrite) parts.push(`<button class="ghost" data-edit="${row.id}">Edit</button>`);
+  if (canWrite && canDelete()) parts.push(`<button class="danger" data-delete="${row.id}">Hapus</button>`);
+  return parts.join("");
+}
+
+function bindCrud(table) {
+  const root = byId("view");
+  root.querySelector("[data-add]")?.addEventListener("click", () => openForm(table));
+  root.querySelector("[data-export]")?.addEventListener("click", () => exportCsv(table, visibleRows(table)));
+  root.querySelector("[data-excel]")?.addEventListener("click", () => exportExcel(table, visibleRows(table)));
+  root.querySelector("[data-pdf]")?.addEventListener("click", () => window.print());
+  root.querySelector("[data-import]")?.addEventListener("click", () => openImport(table));
+  root.querySelector("[data-print-class]")?.addEventListener("click", () => openQrPrint());
+  root.querySelector("[data-promote]")?.addEventListener("click", () => openPromote());
+  root.querySelector("[data-search]")?.addEventListener("input", e => {
+    state.filters[table] = e.target.value.toLowerCase();
+    renderCrud(table);
+  });
+  root.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => openForm(table, findById(table, b.dataset.edit)));
+  root.querySelectorAll("[data-delete]").forEach(b => b.onclick = () => softDelete(table, b.dataset.delete));
+  root.querySelectorAll("[data-qr]").forEach(b => b.onclick = () => showStudentQr(findById("students", b.dataset.qr)));
+  root.querySelectorAll("[data-approve]").forEach(b => b.onclick = () => approveLeave(b.dataset.approve));
+}
+
+function visibleRows(table) {
+  let rows = state.db[table].filter(r => !r.deleted_at);
+  const user = currentUser();
+  if (table === "students" && user.role === "wali_kelas") {
+    const classIds = new Set(state.db.classes.filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
+    rows = rows.filter(r => classIds.has(r.active_class_id));
+  }
+  if (table === "leave_requests" && user.role === "wali_kelas") {
+    const classIds = new Set(state.db.classes.filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
+    rows = rows.filter(r => classIds.has(r.class_id));
+  }
+  if (table === "leave_requests" && user.role === "guru") {
+    const classIds = new Set(state.db.schedules.filter(s => s.teacher_id === user.teacher_id).map(s => s.class_id));
+    rows = rows.filter(r => classIds.has(r.class_id));
+  }
+  if (table === "schedules" && user.role === "guru") rows = rows.filter(r => r.teacher_id === user.teacher_id);
+  const q = state.filters[table];
+  if (q) rows = rows.filter(r => JSON.stringify(r).toLowerCase().includes(q));
+  return rows;
+}
+
+function openForm(table, row = null) {
+  const schema = schemas[table];
+  const title = `${row ? "Edit" : "Tambah"} ${schema.title}`;
+  const fields = schema.fields.map(f => fieldHtml(f, row)).join("");
+  modal(title, `<form id="modal-form" class="form-grid">${fields}<div class="wide actions"><button class="primary" type="submit">Simpan</button><button class="ghost" type="button" data-close>Batal</button></div></form>`);
+  byId("modal-form").onsubmit = async e => {
+    e.preventDefault();
+    const data = normalizeRecord(table, formData(e.target), row);
+    if (!validateRecord(table, data, row)) return;
+    if (row) Object.assign(row, data, { updated_at: now(), updated_by: currentUser().id });
+    else state.db[table].push({ id: uid(table.slice(0, 3)), ...data, created_at: now(), updated_at: now(), created_by: currentUser().id });
+    const savedRow = row || state.db[table].at(-1);
+    let credentials = null;
+    if (table === "students") syncStudentHistory(savedRow);
+    if (table === "students") credentials = savedRow.login_enabled === "true" ? await syncStudentUser(savedRow) : disableLinkedUser("student_id", savedRow.id);
+    if (table === "teachers") credentials = savedRow.login_enabled === "true" ? await syncTeacherUser(savedRow) : disableLinkedUser("teacher_id", savedRow.id);
+    if (table === "leave_requests" && data.status === "approved") applyApprovedLeave(row || state.db.leave_requests.at(-1));
+    saveDb(); closeModal(); renderCrud(table);
+    if (table === "settings") applySchoolBrand();
+    if (credentials) showGeneratedCredentials(credentials);
+    else toast("Data disimpan.", "ok");
+  };
+}
+
+function fieldHtml([key, label, type, required, options], row) {
+  const value = escapeHtml(row?.[key] ?? defaultValue(type));
+  const req = required ? "required" : "";
+  if (type === "textarea") return `<label class="wide">${label}<textarea name="${key}" ${req}>${value}</textarea></label>`;
+  if (type.startsWith("ref:")) {
+    const table = type.split(":")[1];
+    return `<label>${label}<select name="${key}" ${req}><option value="">Pilih...</option>${state.db[table].filter(r => !r.deleted_at).map(r => `<option value="${r.id}" ${row?.[key] === r.id ? "selected" : ""}>${escapeHtml(displayName(table, r))}</option>`).join("")}</select></label>`;
+  }
+  if (type === "select") return `<label>${label}<select name="${key}" ${req}>${options.map(([v, l]) => `<option value="${v}" ${String(row?.[key] ?? "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>`;
+  return `<label>${label}<input name="${key}" type="${type}" value="${value}" ${req}></label>`;
+}
+
+function defaultValue(type) { return type === "select" ? "true" : ""; }
+function normalizeRecord(table, data, row) {
+  if (table === "students" && !row) data.qr_token = generateQrToken();
+  if (table === "students") {
+    data.login_enabled ||= "true";
+  }
+  if (table === "teachers") {
+    data.login_enabled ||= "true";
+  }
+  if (table === "settings") data.late_tolerance_minutes = Number(data.late_tolerance_minutes || 15);
+  if (table === "leave_requests" && data.status === "approved") {
+    if (!canApproveLeaveFor(data.class_id)) data.status = "pending";
+  }
+  if (table === "leave_requests" && data.status === "approved") {
+    data.approved_by = currentUser().id;
+    data.approved_at = now();
+  }
+  return data;
+}
+
+function validateRecord(table, data, row) {
+  if (table === "students") {
+    if (data.status === "aktif" && !findById("classes", data.active_class_id)) return toast("Kelas aktif wajib valid.", "error"), false;
+    const duplicate = state.db.students.find(s => !s.deleted_at && s.nis === data.nis && s.id !== row?.id);
+    if (duplicate) return toast("NIS sudah digunakan.", "error"), false;
+  }
+  if (table === "schedules") {
+    if (!isActiveRef("teachers", data.teacher_id) || !isActiveRef("subjects", data.subject_id)) return toast("Guru dan mapel harus aktif.", "error"), false;
+  }
+  if (table === "teachers" && data.login_enabled === "true") {
+    const duplicateNip = state.db.teachers.find(t => !t.deleted_at && t.nip && t.nip === data.nip && t.id !== row?.id);
+    if (duplicateNip) return toast("NIP sudah digunakan.", "error"), false;
+  }
+  if (table === "leave_requests" && data.end_date < data.start_date) return toast("Tanggal selesai tidak boleh sebelum tanggal mulai.", "error"), false;
+  if (table === "leave_requests") {
+    if (!canCreateLeaveRequest(table)) return toast("Anda tidak memiliki akses membuat pengajuan izin.", "error"), false;
+    if (data.status === "approved" && !canApproveLeaveFor(data.class_id)) return toast("Hanya Administrator atau wali kelas terkait yang bisa menyetujui izin.", "error"), false;
+    if (currentUser().role === "wali_kelas" && !canApproveLeaveFor(data.class_id)) return toast("Wali kelas hanya boleh mengelola izin kelas binaannya.", "error"), false;
+    if (currentUser().role === "guru") {
+      const classIds = new Set(state.db.schedules.filter(s => s.teacher_id === currentUser().teacher_id).map(s => s.class_id));
+      if (!classIds.has(data.class_id)) return toast("Guru hanya boleh membuat pengajuan izin untuk kelas yang diajar.", "error"), false;
+    }
+  }
+  return true;
+}
+
+function syncStudentHistory(student) {
+  const cls = findById("classes", student.active_class_id);
+  if (!cls) return;
+  const exists = state.db.student_class_histories.find(h => h.student_id === student.id && h.class_id === cls.id && h.academic_year_id === cls.academic_year_id && h.semester_id === cls.semester_id);
+  if (!exists) state.db.student_class_histories.push({ id: uid("sch"), student_id: student.id, class_id: cls.id, academic_year_id: cls.academic_year_id, semester_id: cls.semester_id, status: "aktif", start_date: today(), end_date: "", created_at: now() });
+}
+
+async function syncTeacherUser(teacher) {
+  if (teacher.login_enabled !== "true") return;
+  const role = teacher.is_homeroom === "true" ? "wali_kelas" : "guru";
+  return syncLinkedUser({
+    role,
+    linkKey: "teacher_id",
+    linkId: teacher.id,
+    name: teacher.name,
+    active: teacher.active
+  });
+}
+
+async function syncStudentUser(student) {
+  if (student.login_enabled !== "true") return;
+  return syncLinkedUser({
+    role: "siswa",
+    linkKey: "student_id",
+    linkId: student.id,
+    name: student.name,
+    active: student.status === "aktif" ? "true" : "false"
+  });
+}
+
+async function syncLinkedUser({ role, linkKey, linkId, name, active }) {
+  let user = state.db.users.find(u => u[linkKey] === linkId);
+  const password = makePassword();
+  if (user) {
+    Object.assign(user, { name, role, active, updated_at: now() });
+    delete user.email;
+    return null;
+  }
+  user = { id: uid("usr"), name, role, [linkKey]: linkId, active, password_hash: await hashPassword(password), created_at: now(), updated_at: now() };
+  state.db.users.push(user);
+  return { name, password, role };
+}
+
+function disableLinkedUser(linkKey, linkId) {
+  const user = state.db.users.find(u => u[linkKey] === linkId);
+  if (user) {
+    user.active = "false";
+    user.updated_at = now();
+  }
+  return null;
+}
+
+function makePassword() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(10));
+  return Array.from(bytes, b => alphabet[b % alphabet.length]).join("");
+}
+
+function syncLinkedRecordFromUser(user) {
+  if (user.teacher_id) {
+    const teacher = findById("teachers", user.teacher_id);
+    if (teacher) {
+      teacher.name = user.name;
+      teacher.active = user.active;
+      teacher.is_homeroom = user.role === "wali_kelas" ? "true" : teacher.is_homeroom;
+      teacher.updated_at = now();
+    }
+  }
+  if (user.student_id) {
+    const student = findById("students", user.student_id);
+    if (student) {
+      student.name = user.name;
+      student.status = user.active === "false" ? student.status : "aktif";
+      student.updated_at = now();
+    }
+  }
+}
+
+function showGeneratedCredentials({ name, email, password, role }) {
+  if (!loginNeedsPassword(role)) {
+    toast(`Akun ${roles[role] || role} aktif. Login memakai ${role === "siswa" ? "NISN" : "NIP"}.`, "ok");
+    return;
+  }
+  const loginId = role === "siswa" ? "NISN siswa" : ["guru", "wali_kelas", "kepala_sekolah"].includes(role) ? "NIP" : "Email";
+  modal("Akun Login Dibuat", `
+    <div class="panel" style="box-shadow:none">
+      <p class="muted">Berikan kredensial ini ke pengguna. Password ditampilkan sekali pada saat akun dibuat.</p>
+      <div class="table-wrap"><table><tbody>
+        <tr><th>Nama</th><td>${escapeHtml(name)}</td></tr>
+        <tr><th>Role</th><td>${escapeHtml(roles[role] || role)}</td></tr>
+        <tr><th>Login</th><td>${escapeHtml(loginId)}</td></tr>
+        <tr><th>Password</th><td><strong>${escapeHtml(password)}</strong></td></tr>
+      </tbody></table></div>
+      <div class="actions" style="margin-top:12px"><button class="primary" data-close>Mengerti</button></div>
+    </div>`);
+}
+
+function generateQrToken() {
+  let token;
+  do token = `QR-${crypto.randomUUID().replaceAll("-", "").slice(0, 24).toUpperCase()}`;
+  while (state.db.students.some(s => s.qr_token === token));
+  return token;
+}
+
+function renderAttendance() {
+  const user = currentUser();
+  const teacher = state.db.teachers.find(t => t.id === user.teacher_id);
+  const day = dayName(new Date());
+  let schedules = state.db.schedules.filter(s => s.active !== "false" && s.day === day);
+  if (user.role === "guru" && teacher) schedules = schedules.filter(s => s.teacher_id === teacher.id);
+  byId("view").innerHTML = `
+    <section class="panel">
+      <div class="panel-head">
+        <div><h2>Jadwal Hari Ini (${day})</h2><p class="muted">Pilih jadwal untuk membuka sesi. QR siswa hanya menjadi identitas.</p></div>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Kelas</th><th>Mapel</th><th>Guru</th><th>Jam</th><th>Status Sesi</th><th>Aksi</th></tr></thead><tbody>
+        ${schedules.map(s => scheduleRow(s)).join("") || emptyRow(6)}
+      </tbody></table></div>
+    </section>
+    <section id="session-panel"></section>`;
+  byId("view").querySelectorAll("[data-open-session]").forEach(b => b.onclick = () => openSession(b.dataset.openSession));
+  byId("view").querySelectorAll("[data-view-session]").forEach(b => b.onclick = () => renderSession(b.dataset.viewSession));
+}
+
+function scheduleRow(s) {
+  const session = state.db.attendance_sessions.find(x => x.schedule_id === s.id && x.date === today() && x.status !== "cancelled");
+  const canOpen = canOpenScheduleNow(s);
+  const closedReason = currentUser().role === "guru" && !canOpen ? scheduleOpenReason(s) : "";
+  return `<tr><td>${refName("classes")(s.class_id)}</td><td>${refName("subjects")(s.subject_id)}</td><td>${refName("teachers")(s.teacher_id)}</td><td>${s.start_time} - ${s.end_time}</td><td>${session ? badge(session.status) : (closedReason || "Belum dibuka")}</td><td class="row-actions">${session ? `<button class="secondary" data-view-session="${session.id}">Buka Panel</button>` : canOpen ? `<button class="primary" data-open-session="${s.id}">Buka Sesi</button>` : `<button class="ghost" disabled>Belum Waktunya</button>`}</td></tr>`;
+}
+
+function renderHistory() {
+  const scopedRecords = scopedAttendanceRecords();
+  const selectedDate = state.filters.historyDate || "";
+  const selectedSubject = state.filters.historySubject || "";
+  const showSubjectFilter = currentUser().role === "siswa";
+  let dateRecords = selectedDate ? scopedRecords.filter(r => r.date === selectedDate) : [];
+  if (selectedSubject) dateRecords = dateRecords.filter(r => r.subject_id === selectedSubject);
+  const dateRecordIds = new Set(dateRecords.map(r => r.id));
+  const dateStudentIds = new Set(dateRecords.map(r => r.student_id));
+  const logs = selectedDate ? state.db.attendance_logs.filter(log => {
+    const logDate = log.created_at?.slice(0, 10);
+    return (dateRecordIds.has(log.attendance_record_id) || dateStudentIds.has(log.student_id)) && logDate === selectedDate;
+  }).slice().reverse().map(log => {
+    const student = findById("students", log.student_id);
+    const user = findById("users", log.changed_by);
+    return `<tr><td>${escapeHtml(log.created_at?.slice(0, 19).replace("T", " ") || "")}</td><td>${escapeHtml(student?.name || "-")}</td><td>${badge(log.old_status || "belum")}</td><td>${badge(log.new_status)}</td><td>${escapeHtml(user?.name || "-")}</td><td>${escapeHtml(log.reason || "")}</td></tr>`;
+  }).join("") : "";
+  const scans = dateRecords.slice().reverse().slice(0, 80).map(r => {
+    const student = findById("students", r.student_id);
+    return `<tr><td>${escapeHtml(r.date || "")}</td><td>${escapeHtml(r.scan_time || "-")}</td><td>${escapeHtml(student?.name || "-")}</td><td>${refName("classes")(r.class_id)}</td><td>${refName("subjects")(r.subject_id)}</td><td>${badge(r.status)}</td><td>${escapeHtml(r.input_method || "")}</td></tr>`;
+  }).join("");
+  byId("view").innerHTML = `
+    <section class="panel">
+      <div class="panel-head"><div><h2>Pilih Tanggal History</h2><p class="muted">Riwayat scan dan audit log ditampilkan setelah tanggal dipilih.</p></div></div>
+      <div class="filters">
+        <input type="date" id="history-date" value="${escapeHtml(selectedDate)}">
+        ${showSubjectFilter ? historySubjectSelect(selectedSubject) : ""}
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><div><h2>Riwayat Scan</h2><p class="muted">Aktivitas absensi terbaru dari QR, manual, izin otomatis, dan sistem alfa.</p></div></div>
+      ${selectedDate ? `<div class="table-wrap"><table><thead><tr><th>Tanggal</th><th>Jam</th><th>Siswa</th><th>Kelas</th><th>Mapel</th><th>Status</th><th>Metode</th></tr></thead><tbody>${scans || emptyRow(7)}</tbody></table></div>` : `<p class="muted">Pilih tanggal terlebih dahulu.</p>`}
+    </section>
+    <section class="panel">
+      <div class="panel-head"><div><h2>Audit Log</h2><p class="muted">Perubahan status yang membutuhkan alasan tersimpan di sini.</p></div></div>
+      ${selectedDate ? `<div class="table-wrap"><table><thead><tr><th>Waktu</th><th>Siswa</th><th>Dari</th><th>Ke</th><th>Diubah Oleh</th><th>Alasan</th></tr></thead><tbody>${logs || emptyRow(6)}</tbody></table></div>` : `<p class="muted">Pilih tanggal terlebih dahulu.</p>`}
+    </section>`;
+  byId("history-date").onchange = e => {
+    state.filters.historyDate = e.target.value;
+    renderHistory();
+  };
+  byId("history-subject")?.addEventListener("change", e => {
+    state.filters.historySubject = e.target.value;
+    renderHistory();
+  });
+}
+
+function historySubjectSelect(selected) {
+  const user = currentUser();
+  const subjectIds = new Set(state.db.attendance_records.filter(r => r.student_id === user.student_id).map(r => r.subject_id));
+  const options = [...subjectIds].map(id => `<option value="${id}" ${selected === id ? "selected" : ""}>${escapeHtml(displayName("subjects", findById("subjects", id)))}</option>`).join("");
+  return `<select id="history-subject"><option value="">Semua Pelajaran</option>${options}</select>`;
+}
+
+function scopedAttendanceRecords() {
+  const user = currentUser();
+  if (user.role === "siswa") return state.db.attendance_records.filter(r => r.student_id === user.student_id);
+  if (user.role === "guru") return state.db.attendance_records.filter(r => r.teacher_id === user.teacher_id);
+  if (user.role === "wali_kelas") {
+    const classIds = new Set(state.db.classes.filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
+    return state.db.attendance_records.filter(r => classIds.has(r.class_id));
+  }
+  return state.db.attendance_records.slice();
+}
+
+function openSession(scheduleId) {
+  const s = findById("schedules", scheduleId);
+  if (!s || s.active === "false") return toast("Jadwal tidak aktif.", "error");
+  if (!scheduleInActivePeriod(s)) return toast("Jadwal tidak sesuai tahun ajaran/semester aktif.", "error");
+  if (currentUser().role === "guru" && s.teacher_id !== currentUser().teacher_id) return toast("Guru hanya bisa membuka jadwalnya sendiri.", "error");
+  if (currentUser().role === "guru" && !canOpenScheduleNow(s)) return toast(scheduleOpenReason(s), "error");
+  if (isHoliday(today())) return toast("Hari ini hari libur. Sesi tidak dibuat.", "error");
+  const exists = state.db.attendance_sessions.find(x => x.schedule_id === s.id && x.date === today() && x.status !== "cancelled");
+  if (exists) return renderSession(exists.id);
+  if (!studentsInClass(s.class_id).length) return toast("Tidak ada siswa aktif pada kelas ini.", "error");
+  const session = { id: uid("ses"), schedule_id: s.id, teacher_id: s.teacher_id, class_id: s.class_id, subject_id: s.subject_id, academic_year_id: s.academic_year_id, semester_id: s.semester_id, date: today(), start_time: s.start_time, end_time: s.end_time, status: "open", opened_by: currentUser().id, closed_by: "", opened_at: now(), closed_at: "" };
+  state.db.attendance_sessions.push(session);
+  studentsInClass(s.class_id).forEach(st => {
+    const leave = approvedLeaveFor(st.id, today());
+    if (leave) upsertRecord(session, st, leave.leave_type, "leave_auto", "Status awal dari izin/sakit disetujui.");
+  });
+  saveDb();
+  renderAttendance();
+  renderSession(session.id);
+  toast("Sesi absensi dibuka.", "ok");
+}
+
+function scheduleInActivePeriod(schedule) {
+  const ay = findById("academic_years", schedule.academic_year_id);
+  const sem = findById("semesters", schedule.semester_id);
+  return ay?.is_active === "true" && sem?.is_active === "true";
+}
+
+function canOpenScheduleNow(schedule) {
+  if (!schedule) return false;
+  if (currentUser().role !== "guru") return true;
+  if (schedule.teacher_id !== currentUser().teacher_id) return false;
+  if (schedule.day !== dayName(new Date())) return false;
+  return isCurrentTimeWithinSchedule(schedule);
+}
+
+function scheduleOpenReason(schedule) {
+  if (!schedule) return "Jadwal sesi tidak ditemukan.";
+  if (schedule.teacher_id !== currentUser().teacher_id) return "Jadwal ini bukan milik guru yang login.";
+  if (schedule.day !== dayName(new Date())) return `Sesi hanya bisa dibuka pada hari ${schedule.day}.`;
+  if (!isCurrentTimeWithinSchedule(schedule)) return `Sesi hanya bisa dibuka saat jam pelajaran ${schedule.start_time} - ${schedule.end_time}.`;
+  return "Sesi belum bisa dibuka.";
+}
+
+function isCurrentTimeWithinSchedule(schedule) {
+  const nowDate = new Date();
+  const current = nowDate.getHours() * 60 + nowDate.getMinutes();
+  return current >= timeToMinutes(schedule.start_time) && current <= timeToMinutes(schedule.end_time);
+}
+
+function timeToMinutes(value) {
+  const [h, m] = String(value || "00:00").split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+function renderSession(sessionId) {
+  const session = findById("attendance_sessions", sessionId);
+  const schedule = findById("schedules", session.schedule_id);
+  const canScanNow = session.status === "open" && (currentUser().role !== "guru" || canOpenScheduleNow(schedule));
+  const rows = studentsInClass(session.class_id).map(st => {
+    const rec = state.db.attendance_records.find(r => r.session_id === session.id && r.student_id === st.id);
+    return `<div class="status-row"><span>${escapeHtml(st.name)}<br><small class="muted">${escapeHtml(st.nis || "")}</small></span>${badge(rec?.status || "belum")}</div>`;
+  }).join("");
+  byId("session-panel").innerHTML = `
+    <section class="panel">
+      <div class="panel-head">
+        <div><h2>${refName("classes")(session.class_id)} - ${refName("subjects")(session.subject_id)}</h2><p class="muted">${session.date}, ${session.start_time} - ${session.end_time}. Status: ${statusText(session.status)}</p></div>
+        <div class="actions">${session.status === "open" ? `<button class="danger" data-close-session>Tutup Sesi</button>` : ""}<button class="secondary" data-export-session>Export CSV</button><button class="secondary" data-export-session-xls>Export Excel</button></div>
+      </div>
+      <div class="scanner">
+        <div>
+          <div class="scan-focus-badge">Arahkan QR siswa ke area scanner</div>
+          <video id="qr-video" muted playsinline></video>
+          <div class="actions no-print" style="margin-top:10px">
+            ${canScanNow ? `<button class="primary" data-start-camera>Scan Kamera</button><button class="ghost" data-stop-camera>Stop Kamera</button>` : ""}
+          </div>
+        </div>
+        <div class="scan-console">
+          <label>Input Token QR Manual<input id="qr-token-input" placeholder="Tempel token QR siswa"></label>
+          <button class="primary" data-scan-token ${!canScanNow ? "disabled" : ""}>Catat QR</button>
+          ${!canScanNow && session.status === "open" ? `<p class="muted">${escapeHtml(scheduleOpenReason(schedule))}</p>` : ""}
+          ${(session.status === "open" || currentUser().role === "super_admin") ? `<button class="secondary" data-manual>Input Manual</button>` : ""}
+          <div class="status-list">${rows || "<p class='muted'>Belum ada siswa di kelas ini.</p>"}</div>
+        </div>
+      </div>
+    </section>`;
+  const root = byId("session-panel");
+  root.querySelector("[data-close-session]")?.addEventListener("click", () => closeSession(session.id));
+  root.querySelector("[data-start-camera]")?.addEventListener("click", () => startCamera(session.id));
+  root.querySelector("[data-stop-camera]")?.addEventListener("click", stopCamera);
+  root.querySelector("[data-scan-token]")?.addEventListener("click", () => scanToken(session.id, byId("qr-token-input").value.trim()));
+  root.querySelector("[data-manual]")?.addEventListener("click", () => openManualAttendance(session.id));
+  root.querySelector("[data-export-session]")?.addEventListener("click", () => exportCsv("laporan_sesi_absensi", state.db.attendance_records.filter(r => r.session_id === session.id), "attendance_report"));
+  root.querySelector("[data-export-session-xls]")?.addEventListener("click", () => exportExcel("laporan_sesi_absensi", state.db.attendance_records.filter(r => r.session_id === session.id), "attendance_report"));
+}
+
+function scanToken(sessionId, token) {
+  const session = findById("attendance_sessions", sessionId);
+  if (!token) return toast("Token QR wajib diisi.", "error");
+  if (!session || session.status !== "open") return toast("Sesi sudah tertutup.", "error");
+  const schedule = findById("schedules", session.schedule_id);
+  if (currentUser().role === "guru" && !canOpenScheduleNow(schedule)) return failBeep(), toast(scheduleOpenReason(schedule), "error");
+  const student = state.db.students.find(s => s.qr_token === token && !s.deleted_at);
+  if (!student) return failBeep(), toast("QR tidak valid.", "error");
+  if (student.status !== "aktif") return failBeep(), toast("Siswa tidak aktif.", "error");
+  if (!studentsInClass(session.class_id).some(s => s.id === student.id)) return failBeep(), toast("Siswa tidak terdaftar pada kelas ini.", "error");
+  const existing = state.db.attendance_records.find(r => r.session_id === session.id && r.student_id === student.id);
+  if (existing && ["hadir", "terlambat"].includes(existing.status)) return failBeep(), toast("Siswa sudah absen pada sesi ini.", "warn");
+  const leave = approvedLeaveFor(student.id, session.date);
+  if (leave && (!existing || ["izin", "sakit"].includes(existing.status))) {
+    return confirmLeaveOverride(session, student, existing, leave);
+  }
+  const status = scanStatus(session);
+  const oldStatus = existing?.status;
+  const rec = upsertRecord(session, student, status, "qr", "Scan QR");
+  if (oldStatus && oldStatus !== status) logChange(rec, oldStatus, status, "Scan QR mengubah status pada sesi terbuka.");
+  saveDb(); successBeep(); toast(`Berhasil: ${student.name} ${statusLabels[status]}.`, "ok"); renderSession(session.id);
+}
+
+function confirmLeaveOverride(session, student, existing, leave) {
+  modal("Siswa Memiliki Izin/Sakit Aktif", `
+    <p>${escapeHtml(student.name)} memiliki status ${statusLabels[leave.leave_type]} aktif.</p>
+    <form id="leave-override" class="form-grid">
+      <label>Pilihan<select name="choice" required><option value="keep">Tetap ${statusLabels[leave.leave_type]}</option><option value="hadir">Ubah menjadi Hadir</option><option value="terlambat">Ubah menjadi Terlambat</option></select></label>
+      <label class="wide">Alasan<textarea name="reason" placeholder="Wajib jika mengubah ke hadir/terlambat"></textarea></label>
+      <div class="wide actions"><button class="primary">Simpan</button><button class="ghost" type="button" data-close>Batal</button></div>
+    </form>`);
+  byId("leave-override").onsubmit = e => {
+    e.preventDefault();
+    const fd = formData(e.target);
+    if (fd.choice !== "keep" && !fd.reason.trim()) return toast("Alasan wajib diisi.", "error");
+    if (fd.choice !== "keep") {
+      const rec = upsertRecord(session, student, fd.choice, "qr", fd.reason);
+      logChange(rec, existing?.status || leave.leave_type, fd.choice, fd.reason);
+    }
+    saveDb(); closeModal(); renderSession(session.id); toast("Status disimpan.", "ok");
+  };
+}
+
+function scanStatus(session) {
+  const tolerance = Number(state.db.settings[0]?.late_tolerance_minutes || 15);
+  const start = new Date(`${session.date}T${session.start_time || "00:00"}`);
+  const limit = new Date(start.getTime() + tolerance * 60000);
+  return new Date() <= limit ? "hadir" : "terlambat";
+}
+
+function upsertRecord(session, student, status, method, note) {
+  let rec = state.db.attendance_records.find(r => r.session_id === session.id && r.student_id === student.id);
+  const payload = { session_id: session.id, student_id: student.id, class_id: session.class_id, subject_id: session.subject_id, teacher_id: session.teacher_id, schedule_id: session.schedule_id, academic_year_id: session.academic_year_id, semester_id: session.semester_id, date: session.date, start_time: session.start_time, end_time: session.end_time, scan_time: method === "qr" ? new Date().toTimeString().slice(0, 8) : "", status, input_method: method, note, updated_by: currentUser().id, updated_at: now() };
+  if (rec) Object.assign(rec, payload);
+  else {
+    rec = { id: uid("rec"), ...payload, created_by: currentUser().id, created_at: now() };
+    state.db.attendance_records.push(rec);
+  }
+  return rec;
+}
+
+function closeSession(sessionId) {
+  const session = findById("attendance_sessions", sessionId);
+  if (!session || session.status !== "open") return toast("Hanya sesi terbuka yang bisa ditutup.", "error");
+  if (isHoliday(session.date)) return toast("Hari libur tidak diproses menjadi alfa.", "warn");
+  studentsInClass(session.class_id).forEach(st => {
+    const rec = state.db.attendance_records.find(r => r.session_id === session.id && r.student_id === st.id);
+    if (rec && ["hadir", "terlambat"].includes(rec.status)) return;
+    const leave = approvedLeaveFor(st.id, session.date);
+    if (leave) upsertRecord(session, st, leave.leave_type, "leave_auto", "Diterapkan saat sesi ditutup.");
+    else upsertRecord(session, st, "alfa", "system_auto", "Alfa otomatis saat sesi ditutup.");
+  });
+  Object.assign(session, { status: "closed", closed_by: currentUser().id, closed_at: now() });
+  saveDb(); stopCamera(); renderAttendance(); renderSession(session.id); toast("Sesi ditutup dan alfa diproses.", "ok");
+}
+
+function openManualAttendance(sessionId) {
+  const session = findById("attendance_sessions", sessionId);
+  if (!session) return toast("Sesi tidak ditemukan.", "error");
+  if (session.status !== "open" && currentUser().role !== "super_admin") return toast("Sesi sudah ditutup. Perubahan hanya bisa dilakukan Administrator.", "error");
+  modal("Input Absensi Manual", `
+    <form id="manual-form" class="form-grid">
+      <label>Siswa<select name="student_id" required>${studentsInClass(session.class_id).map(s => `<option value="${s.id}">${escapeHtml(s.name)} - ${escapeHtml(s.nis || "")}</option>`).join("")}</select></label>
+      <label>Status<select name="status" required><option value="hadir">Hadir</option><option value="terlambat">Terlambat</option><option value="izin">Izin</option><option value="sakit">Sakit</option><option value="alfa">Alfa</option></select></label>
+      <label class="wide">Alasan<textarea name="reason" required></textarea></label>
+      <div class="wide actions"><button class="primary">Simpan</button><button class="ghost" type="button" data-close>Batal</button></div>
+    </form>`);
+  byId("manual-form").onsubmit = e => {
+    e.preventDefault();
+    const fd = formData(e.target);
+    const st = findById("students", fd.student_id);
+    const existing = state.db.attendance_records.find(r => r.session_id === session.id && r.student_id === st.id);
+    const rec = upsertRecord(session, st, fd.status, "manual", fd.reason);
+    logChange(rec, existing?.status || "belum", fd.status, fd.reason);
+    saveDb(); closeModal(); renderSession(session.id); toast("Absensi manual disimpan.", "ok");
+  };
+}
+
+function approveLeave(id) {
+  const leave = findById("leave_requests", id);
+  if (!leave || !canApproveLeaveFor(leave.class_id)) return toast("Anda tidak memiliki akses menyetujui izin ini.", "error");
+  Object.assign(leave, { status: "approved", approved_by: currentUser().id, approved_at: now(), updated_at: now() });
+  applyApprovedLeave(leave);
+  saveDb(); renderCrud("leave_requests"); toast("Izin/sakit disetujui dan diterapkan.", "ok");
+}
+
+function applyApprovedLeave(leave) {
+  state.db.attendance_records.forEach(rec => {
+    if (rec.student_id !== leave.student_id) return;
+    if (rec.date < leave.start_date || rec.date > leave.end_date) return;
+    if (["hadir", "terlambat"].includes(rec.status)) return;
+    const old = rec.status;
+    rec.status = leave.leave_type;
+    rec.input_method = "leave_auto";
+    rec.note = "Diperbarui otomatis dari izin/sakit disetujui.";
+    rec.updated_by = currentUser().id;
+    rec.updated_at = now();
+    logChange(rec, old, rec.status, "Izin/sakit disetujui setelah absensi.");
+  });
+}
+
+async function startCamera(sessionId) {
+  if (!("BarcodeDetector" in window)) return toast("Browser ini belum mendukung scanner kamera. Gunakan input token manual.", "warn");
+  const video = byId("qr-video");
+  state.videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+  video.srcObject = state.videoStream;
+  await video.play();
+  const detector = new BarcodeDetector({ formats: ["qr_code"] });
+  const loop = async () => {
+    if (!state.videoStream || !video.srcObject) return;
+    try {
+      const codes = await detector.detect(video);
+      if (codes[0]?.rawValue) scanToken(sessionId, codes[0].rawValue.trim());
+    } catch {}
+    setTimeout(loop, 900);
+  };
+  loop();
+}
+
+function stopCamera() {
+  if (state.videoStream) state.videoStream.getTracks().forEach(t => t.stop());
+  state.videoStream = null;
+}
+
+function renderReports() {
+  const user = currentUser();
+  const hideTeacherStudentFilters = ["guru", "wali_kelas"].includes(user.role);
+  const hideClassFilter = user.role === "wali_kelas";
+  byId("view").innerHTML = `
+    <section class="panel">
+      <div class="panel-head"><div><h2>Filter Laporan</h2><p class="muted">Persentase = (Hadir + Terlambat) / Total sesi wajib x 100.</p></div><div class="actions"><button class="secondary" data-csv>Export CSV</button><button class="secondary" data-excel>Export Excel</button><button class="secondary" data-pdf>Cetak/PDF</button></div></div>
+      <div class="filters">
+        ${filterSelect("academic_year_id", "Tahun Ajaran", "academic_years")}
+        ${filterSelect("semester_id", "Semester", "semesters")}
+        ${hideClassFilter ? "" : filterSelect("class_id", "Kelas", "classes")}
+        ${hideTeacherStudentFilters ? "" : filterSelect("student_id", "Siswa", "students")}
+        ${filterSelect("subject_id", "Mapel", "subjects")}
+        ${hideTeacherStudentFilters ? "" : filterSelect("teacher_id", "Guru", "teachers")}
+        <input type="date" id="report-date" aria-label="Tanggal laporan">
+      </div>
+      <div id="report-output"></div>
+    </section>`;
+  byId("view").querySelectorAll("select,input").forEach(el => el.onchange = renderReportOutput);
+  byId("view").querySelector("[data-csv]").onclick = () => exportCsv("laporan_absensi", filteredRecords(), "attendance_report");
+  byId("view").querySelector("[data-excel]").onclick = () => exportExcel("laporan_absensi", filteredRecords(), "attendance_report");
+  byId("view").querySelector("[data-pdf]").onclick = () => window.print();
+  renderReportOutput();
+}
+
+function renderReportOutput() {
+  const records = filteredRecords();
+  const grouped = new Map();
+  records.forEach(r => {
+    const st = findById("students", r.student_id);
+    if (!st) return;
+    const key = r.student_id;
+    if (!grouped.has(key)) grouped.set(key, { student: st, hadir: 0, terlambat: 0, izin: 0, sakit: 0, alfa: 0, total: 0 });
+    const g = grouped.get(key);
+    if (["hadir", "terlambat", "izin", "sakit", "alfa"].includes(r.status)) g[r.status]++;
+    g.total++;
+  });
+  const rows = [...grouped.values()].map((g, i) => {
+    const percent = g.total ? (((g.hadir + g.terlambat) / g.total) * 100).toFixed(1) : "0.0";
+    return `<tr><td>${i + 1}</td><td>${escapeHtml(g.student.nis || "")}</td><td>${escapeHtml(g.student.name)}</td><td>${g.hadir}</td><td>${g.terlambat}</td><td>${g.izin}</td><td>${g.sakit}</td><td>${g.alfa}</td><td>${g.total}</td><td>${percent}%</td><td>${percent >= 90 ? "Baik" : percent >= 75 ? "Perlu perhatian" : "Prioritas pembinaan"}</td></tr>`;
+  }).join("");
+  const setting = state.db.settings[0] || {};
+  byId("report-output").innerHTML = `
+    <div class="print-title"><h2>${escapeHtml(setting.school_name || "Nama Sekolah")}</h2><p>Laporan Kehadiran Semester</p><p>Tanggal cetak: ${today()}</p></div>
+    <div class="table-wrap"><table><thead><tr><th>No</th><th>NIS</th><th>Nama Siswa</th><th>Hadir</th><th>Terlambat</th><th>Izin</th><th>Sakit</th><th>Alfa</th><th>Total Sesi</th><th>Persentase</th><th>Keterangan</th></tr></thead><tbody>${rows || emptyRow(11)}</tbody></table></div>
+    <div class="signatures"><div>Wali Kelas<br><br><br><strong>(________________)</strong></div><div>Kepala Sekolah<br><br><br><strong>${escapeHtml(setting.headmaster_name || "(________________)")}</strong></div></div>`;
+}
+
+function filteredRecords() {
+  const root = byId("view");
+  let rows = scopedAttendanceRecords();
+  ["academic_year_id", "semester_id", "class_id", "student_id", "subject_id", "teacher_id"].forEach(k => {
+    const v = root.querySelector(`[name="${k}"]`)?.value;
+    if (v) rows = rows.filter(r => r[k] === v);
+  });
+  const from = byId("from-date")?.value;
+  const to = byId("to-date")?.value;
+  const date = byId("report-date")?.value;
+  if (date) rows = rows.filter(r => r.date === date);
+  if (from) rows = rows.filter(r => r.date >= from);
+  if (to) rows = rows.filter(r => r.date <= to);
+  return rows;
+}
+
+function renderUsers() {
+  const schema = {
+    columns: [["name", "Nama"], ["role", "Role", v => roles[v] || v], ["active", "Status", boolText]]
+  };
+  const rows = state.db.users.map(u => `<tr>${schema.columns.map(([k, , f]) => `<td>${f ? f(u[k]) : escapeHtml(u[k])}</td>`).join("")}<td class="row-actions"><button class="ghost" data-user="${u.id}">Edit</button></td></tr>`).join("");
+  byId("view").innerHTML = `<section class="panel"><div class="panel-head"><div><h2>Pengguna & Role</h2><p class="muted">Guru, wali kelas, kepala sekolah, dan siswa login memakai NIP/NISN dari data master.</p></div><div class="actions"><button class="primary" data-add-user>Tambah Administrator</button></div></div><div class="table-wrap"><table><thead><tr><th>Nama</th><th>Role</th><th>Status</th><th>Aksi</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+  byId("view").querySelector("[data-add-user]").onclick = () => openUserForm();
+  byId("view").querySelectorAll("[data-user]").forEach(b => b.onclick = () => openUserForm(findById("users", b.dataset.user)));
+}
+
+function renderProfile() {
+  const user = currentUser();
+  const adminProfile = user.role === "super_admin";
+  const linkedInfo = user.role === "siswa"
+    ? `NISN: ${escapeHtml(findById("students", user.student_id)?.nisn || "-")}`
+    : user.teacher_id ? `NIP: ${escapeHtml(findById("teachers", user.teacher_id)?.nip || user.nip || "-")}` : "Akun administrator";
+  byId("view").innerHTML = `
+    <section class="panel">
+      <div class="panel-head">
+        <div><h2>Profil Saya</h2><p class="muted">${adminProfile ? "Administrator bisa mengubah email dan password." : "Login mengikuti NIP/NISN pada data Administrator."}</p></div>
+      </div>
+      <form id="profile-form" class="form-grid">
+        <label>Nama<input name="name" value="${escapeHtml(user.name)}" required></label>
+        <label>Role<input value="${escapeHtml(roles[user.role] || user.role)}" disabled></label>
+        <label class="wide">Identitas Login<input value="${linkedInfo}" disabled></label>
+        ${adminProfile ? `<label>Email Login<input type="email" name="email" value="${escapeHtml(user.email)}" required></label><label>Password Baru<input type="password" name="password" placeholder="Kosongkan jika tidak diubah"></label>` : ""}
+        <div class="wide actions"><button class="primary">Simpan Profil</button></div>
+      </form>
+    </section>`;
+  byId("profile-form").onsubmit = async e => {
+    e.preventDefault();
+    const fd = formData(e.target);
+    user.name = fd.name;
+    if (adminProfile) {
+      const duplicate = state.db.users.find(u => u.email?.toLowerCase() === fd.email.toLowerCase() && u.id !== user.id);
+      if (duplicate) return toast("Email sudah dipakai pengguna lain.", "error");
+      user.email = fd.email;
+      if (fd.password) user.password_hash = await hashPassword(fd.password);
+    }
+    user.updated_at = now();
+    syncLinkedRecordFromUser(user);
+    saveDb();
+    byId("active-user").textContent = user.name;
+    toast("Profil diperbarui.", "ok");
+  };
+}
+
+function openUserForm(row = null) {
+  modal(row ? "Edit Pengguna" : "Tambah Pengguna", `<form id="user-form" class="form-grid">
+    <label>Nama<input name="name" value="${escapeHtml(row?.name || "")}" required></label>
+    <label>Email<input type="email" name="email" value="${escapeHtml(row?.email || "")}" required></label>
+    <label>Role<select name="role"><option value="super_admin">Administrator</option></select></label>
+    <label>Status<select name="active"><option value="true">Aktif</option><option value="false" ${row?.active === "false" ? "selected" : ""}>Nonaktif</option></select></label>
+    <label class="wide">Password ${row ? "(kosongkan jika tidak diubah)" : "(kosongkan untuk dibuat otomatis)"}<input type="password" name="password"></label>
+    <div class="wide actions"><button class="primary">Simpan</button><button class="ghost" type="button" data-close>Batal</button></div>
+  </form>`);
+  byId("user-form").onsubmit = async e => {
+    e.preventDefault();
+    const fd = formData(e.target);
+    const duplicate = state.db.users.find(u => u.email?.toLowerCase() === fd.email.toLowerCase() && u.id !== row?.id);
+    if (duplicate) return toast("Email sudah dipakai pengguna lain.", "error");
+    const payload = { name: fd.name, email: fd.email, role: fd.role, active: fd.active, updated_at: now() };
+    const generated = !row && !fd.password ? makePassword() : "";
+    if (generated) fd.password = generated;
+    if (fd.password) payload.password_hash = await hashPassword(fd.password);
+    if (row) Object.assign(row, payload);
+    else state.db.users.push({ id: uid("usr"), ...payload, created_at: now() });
+    syncLinkedRecordFromUser(row || state.db.users.at(-1));
+    saveDb(); closeModal(); renderUsers();
+    if (generated) showGeneratedCredentials({ name: fd.name, email: fd.email, password: generated, role: fd.role });
+    else toast("Pengguna disimpan.", "ok");
+  };
+}
+
+function openImport(table) {
+  modal(`Import CSV ${schemas[table].title}`, `<form id="import-form" class="form-grid"><label class="wide">CSV<textarea name="csv" required placeholder="Header harus sesuai nama field, contoh: name,email"></textarea></label><div class="wide actions"><button class="primary">Import</button><button class="ghost" type="button" data-close>Batal</button></div></form>`);
+  byId("import-form").onsubmit = e => {
+    e.preventDefault();
+    const rows = parseCsv(formData(e.target).csv);
+    rows.forEach(r => state.db[table].push({ id: uid(table.slice(0, 3)), ...r, created_at: now(), updated_at: now(), created_by: currentUser().id }));
+    saveDb(); closeModal(); renderCrud(table); toast(`${rows.length} data diimport.`, "ok");
+  };
+}
+
+function openQrPrint() {
+  const options = state.db.classes.map(c => `<option value="${c.id}">${escapeHtml(displayName("classes", c))}</option>`).join("");
+  modal("Cetak QR Massal", `<form id="qr-class-form" class="form-grid"><label>Kelas<select name="class_id" required>${options}</select></label><div class="wide actions"><button class="primary">Tampilkan QR</button><button class="ghost" type="button" data-close>Batal</button></div></form>`);
+  byId("qr-class-form").onsubmit = e => { e.preventDefault(); const fd = formData(e.target); closeModal(); showQrCards(studentsInClass(fd.class_id)); };
+}
+
+function openPromote() {
+  modal("Naik Kelas Massal", `<form id="promote-form" class="form-grid">
+    <label>Dari Kelas<select name="from" required>${state.db.classes.map(c => `<option value="${c.id}">${escapeHtml(displayName("classes", c))}</option>`).join("")}</select></label>
+    <label>Ke Kelas<select name="to" required>${state.db.classes.map(c => `<option value="${c.id}">${escapeHtml(displayName("classes", c))}</option>`).join("")}</select></label>
+    <div class="wide actions"><button class="primary">Proses Naik Kelas</button><button class="ghost" type="button" data-close>Batal</button></div>
+  </form>`);
+  byId("promote-form").onsubmit = e => {
+    e.preventDefault();
+    const fd = formData(e.target);
+    const to = findById("classes", fd.to);
+    studentsInClass(fd.from).forEach(s => { s.active_class_id = fd.to; s.active_academic_year_id = to.academic_year_id; s.updated_at = now(); syncStudentHistory(s); });
+    saveDb(); closeModal(); renderCrud("students"); toast("Naik kelas massal selesai. Riwayat kelas lama tetap tersimpan.", "ok");
+  };
+}
+
+function showStudentQr(student) { showQrCards([student]); }
+function showQrCards(students) {
+  modal("ID Card QR Siswa", `
+    <div class="actions no-print">
+      <button class="secondary" onclick="window.print()">Cetak Semua</button>
+    </div>
+    <div class="qr-grid id-card-grid">
+      ${students.map(s => studentIdCardHtml(s)).join("")}
+    </div>`);
+  setTimeout(() => {
+    document.querySelectorAll("[data-qrcode]").forEach(el => {
+      if (window.QRCode) new QRCode(el, { text: el.dataset.qrcode, width: 156, height: 156, correctLevel: QRCode.CorrectLevel.H });
+      else el.innerHTML = fallbackQr(el.dataset.qrcode);
+    });
+    document.querySelectorAll("[data-download-card]").forEach(btn => {
+      btn.onclick = () => downloadStudentIdCard(btn.dataset.downloadCard);
+    });
+  }, 50);
+}
+
+function studentIdCardHtml(student) {
+  const setting = state.db.settings[0] || {};
+  return `
+    <article class="id-card" data-student-card="${student.id}">
+      <div class="id-card-brand">
+        <span class="id-logo-mark">${escapeHtml(initials(setting.school_name || "EA"))}</span>
+        <strong>${escapeHtml(setting.school_name || "EduAttend Pro")}</strong>
+      </div>
+      <div class="id-art">
+        <span class="shape shape-left"></span>
+        <span class="shape shape-right"></span>
+        <span class="shape shape-dot-a"></span>
+        <span class="shape shape-dot-b"></span>
+        <span class="shape shape-star-a">✦</span>
+        <span class="shape shape-star-b">✦</span>
+        <div class="id-qr-frame">
+          <div class="id-qr" data-qrcode="${escapeHtml(student.qr_token)}"></div>
+        </div>
+      </div>
+      <div class="id-name-block">
+        <h3>${escapeHtml(student.name)}</h3>
+        <strong>Kartu Absensi Siswa</strong>
+        <p>NIS ${escapeHtml(student.nis || "-")} · NISN ${escapeHtml(student.nisn || "-")}</p>
+      </div>
+      <div class="id-card-foot">
+        <span>${escapeHtml(setting.school_website || "www.sekolah.sch.id")}</span>
+        <span>${escapeHtml(setting.school_phone || "Nomor sekolah")}</span>
+        <button class="secondary no-print" data-download-card="${student.id}">Download</button>
+      </div>
+    </article>`;
+}
+
+async function downloadStudentIdCard(studentId) {
+  const student = findById("students", studentId);
+  if (!student) return toast("Data siswa tidak ditemukan.", "error");
+  const card = document.querySelector(`[data-student-card="${studentId}"]`);
+  const qrCanvas = card?.querySelector(".id-qr canvas");
+  if (!qrCanvas) return toast("QR belum selesai dibuat. Coba ulangi beberapa detik lagi.", "warn");
+
+  const setting = state.db.settings[0] || {};
+  const canvas = document.createElement("canvas");
+  canvas.width = 638;
+  canvas.height = 1013;
+  const ctx = canvas.getContext("2d");
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = "#111111";
+  ctx.font = "900 40px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText(setting.school_name || "EduAttend Pro", 340, 94);
+  roundedRect(ctx, 142, 50, 42, 42, 8, "#111111");
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "900 17px Arial";
+  ctx.fillText(initials(setting.school_name || "EA"), 163, 77);
+
+  ctx.fillStyle = "#ff6500";
+  ctx.beginPath();
+  ctx.arc(104, 470, 92, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(560, 478, 98, 0, Math.PI * 2);
+  ctx.fill();
+  roundedRect(ctx, 0, 560, 72, 116, 0, "#ffb077");
+  roundedRect(ctx, 484, 560, 70, 70, 20, "#ffb077");
+  roundedRect(ctx, 562, 560, 70, 70, 20, "#ffb077");
+  roundedRect(ctx, 484, 644, 70, 70, 20, "#ffb077");
+  roundedRect(ctx, 562, 644, 70, 70, 20, "#ffb077");
+  ctx.fillStyle = "#ff6500";
+  ctx.font = "900 64px Arial";
+  ctx.fillText("✦", 462, 386);
+  ctx.fillText("✦", 594, 552);
+
+  ctx.strokeStyle = "#8b48ff";
+  ctx.lineWidth = 4;
+  ctx.strokeRect(116, 186, 420, 420);
+  roundedRect(ctx, 166, 236, 320, 320, 22, "#ffffff");
+  ctx.drawImage(qrCanvas, 186, 256, 280, 280);
+
+  ctx.fillStyle = "#111111";
+  ctx.font = "900 50px Arial";
+  wrapCanvasTextCentered(ctx, student.name, 319, 704, 520, 54);
+  ctx.fillStyle = "#ff6500";
+  ctx.font = "900 27px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("Kartu Absensi Siswa", 319, 794);
+  ctx.fillStyle = "#111111";
+  ctx.font = "700 20px Arial";
+  ctx.fillText(`NIS ${student.nis || "-"}  ·  NISN ${student.nisn || "-"}`, 319, 834);
+  ctx.font = "700 18px Arial";
+  ctx.fillText(student.qr_token, 319, 872);
+
+  ctx.fillStyle = "#111111";
+  ctx.font = "800 18px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText(`◎ ${setting.school_website || "www.sekolah.sch.id"}`, 88, 954);
+  ctx.textAlign = "right";
+  ctx.fillText(`☏ ${setting.school_phone || "Nomor sekolah"}`, 550, 954);
+  ctx.textAlign = "left";
+
+  const a = document.createElement("a");
+  a.href = canvas.toDataURL("image/png");
+  a.download = `id-card-${(student.nisn || student.nis || student.name).replace(/[^a-z0-9]+/gi, "-")}.png`;
+  a.click();
+}
+
+function roundedRect(ctx, x, y, w, h, r, fill) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+}
+
+function drawInfo(ctx, label, value, x, y) {
+  ctx.fillStyle = "#667085";
+  ctx.font = "700 18px Arial";
+  ctx.fillText(label, x, y);
+  ctx.fillStyle = "#111827";
+  ctx.font = "800 26px Arial";
+  ctx.fillText(value, x + 120, y);
+}
+
+function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
+  const words = String(text).split(" ");
+  let line = "";
+  words.forEach((word, index) => {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      ctx.fillText(line, x, y);
+      line = word;
+      y += lineHeight;
+    } else {
+      line = test;
+    }
+    if (index === words.length - 1) ctx.fillText(line, x, y);
+  });
+}
+
+function wrapCanvasTextCentered(ctx, text, centerX, y, maxWidth, lineHeight) {
+  const words = String(text).split(" ");
+  const lines = [];
+  let line = "";
+  words.forEach(word => {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = test;
+    }
+  });
+  if (line) lines.push(line);
+  lines.slice(0, 2).forEach((l, i) => ctx.fillText(l, centerX, y + i * lineHeight));
+}
+
+function initials(name) {
+  return String(name || "ID").split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join("").toUpperCase();
+}
+
+function fallbackQr(token) {
+  let n = [...token].reduce((a, c) => a + c.charCodeAt(0), 0);
+  return `<div class="qr-fallback">${Array.from({ length: 64 }, (_, i) => { n = (n * 1103515245 + 12345) & 0x7fffffff; return `<i class="${(n + i) % 3 ? "on" : ""}"></i>`; }).join("")}</div>`;
+}
+
+function softDelete(table, id) {
+  if (!confirm("Hapus data ini? Data penting ditandai soft delete.")) return;
+  const row = findById(table, id);
+  row.deleted_at = now(); row.deleted_by = currentUser().id;
+  saveDb(); renderCrud(table); toast("Data dihapus.", "ok");
+}
+
+function exportCsv(name, rows, type = "") {
+  const prepared = prepareExportRows(name, rows, type);
+  const keys = exportKeys(prepared);
+  const csv = [keys.join(","), ...prepared.map(r => keys.map(k => csvCell(r[k])).join(","))].join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `${name}_${today()}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function exportExcel(name, rows, type = "") {
+  const prepared = prepareExportRows(name, rows, type);
+  const keys = exportKeys(prepared);
+  const title = exportTitle(name, type);
+  const html = `
+    <html><head><meta charset="utf-8"><style>
+      table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:12px}
+      th{background:#dbeafe;font-weight:bold;text-align:center}
+      th,td{border:1px solid #94a3b8;padding:6px 8px;vertical-align:middle}
+      .title{font-size:16px;font-weight:bold;text-align:center;background:#fff}
+      .meta{font-weight:bold;background:#f8fafc}
+    </style></head><body>
+    <table>
+      <tr><td class="title" colspan="${Math.max(keys.length, 1)}">${escapeHtml(title)}</td></tr>
+      <tr><td class="meta" colspan="${Math.max(keys.length, 1)}">Tanggal Cetak: ${today()}</td></tr>
+      <tr>${keys.map(k => `<th>${escapeHtml(k)}</th>`).join("")}</tr>
+      ${prepared.map(r => `<tr>${keys.map(k => `<td>${escapeHtml(r[k] ?? "")}</td>`).join("")}</tr>`).join("")}
+    </table></body></html>`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([html], { type: "application/vnd.ms-excel" }));
+  a.download = `${name}_${today()}.xls`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function prepareExportRows(name, rows, type) {
+  if (type === "attendance_report" || rows.some(r => "session_id" in r && "student_id" in r && "status" in r)) {
+    return rows.map((r, i) => attendanceExportRow(r, i));
+  }
+  if (name === "students") return rows.map((s, i) => ({
+    "No": i + 1,
+    "NIS": s.nis || "",
+    "NISN": s.nisn || "",
+    "Nama Siswa": s.name || "",
+    "Jenis Kelamin": s.gender === "L" ? "Laki-laki" : s.gender === "P" ? "Perempuan" : "",
+    "Tempat Lahir": s.birth_place || "",
+    "Tanggal Lahir": s.birth_date || "",
+    "Kelas": displayName("classes", findById("classes", s.active_class_id)),
+    "Tahun Ajaran": displayName("academic_years", findById("academic_years", s.active_academic_year_id)),
+    "Nama Ayah": s.father_name || "",
+    "Nama Ibu": s.mother_name || "",
+    "HP Orang Tua": s.parent_phone || "",
+    "Status": titleCase(s.status || ""),
+    "QR Token": s.qr_token || ""
+  }));
+  if (name === "teachers") return rows.map((t, i) => ({
+    "No": i + 1,
+    "NIP": t.nip || "",
+    "Nama Guru": t.name || "",
+    "Nomor HP": t.phone || "",
+    "Alamat": t.address || "",
+    "Status": t.active === "false" ? "Nonaktif" : "Aktif",
+    "Wali Kelas": t.is_homeroom === "true" ? "Ya" : "Tidak"
+  }));
+  if (name === "schedules") return rows.map((s, i) => ({
+    "No": i + 1,
+    "Tahun Ajaran": displayName("academic_years", findById("academic_years", s.academic_year_id)),
+    "Semester": displayName("semesters", findById("semesters", s.semester_id)),
+    "Hari": s.day || "",
+    "Kelas": displayName("classes", findById("classes", s.class_id)),
+    "Mata Pelajaran": displayName("subjects", findById("subjects", s.subject_id)),
+    "Guru": displayName("teachers", findById("teachers", s.teacher_id)),
+    "Jam Mulai": s.start_time || "",
+    "Jam Selesai": s.end_time || "",
+    "Ruang": s.room || "",
+    "Status": s.active === "false" ? "Nonaktif" : "Aktif"
+  }));
+  if (name === "classes") return rows.map((c, i) => ({
+    "No": i + 1,
+    "Nama Kelas": c.name || "",
+    "Tingkat": c.level || "",
+    "Jurusan": c.major || "",
+    "Tahun Ajaran": displayName("academic_years", findById("academic_years", c.academic_year_id)),
+    "Semester": displayName("semesters", findById("semesters", c.semester_id)),
+    "Wali Kelas": displayName("teachers", findById("teachers", c.homeroom_teacher_id))
+  }));
+  if (name === "leave_requests") return rows.map((l, i) => ({
+    "No": i + 1,
+    "Nama Siswa": displayName("students", findById("students", l.student_id)),
+    "Kelas": displayName("classes", findById("classes", l.class_id)),
+    "Tahun Ajaran": displayName("academic_years", findById("academic_years", l.academic_year_id)),
+    "Semester": displayName("semesters", findById("semesters", l.semester_id)),
+    "Jenis": titleCase(l.leave_type || ""),
+    "Tanggal Mulai": l.start_date || "",
+    "Tanggal Selesai": l.end_date || "",
+    "Alasan": l.reason || "",
+    "Status": titleCase(l.status || ""),
+    "Catatan": l.approval_note || ""
+  }));
+  return rows.map((row, i) => {
+    const out = { "No": i + 1 };
+    Object.entries(row).forEach(([k, v]) => {
+      if (["id", "created_by", "updated_by", "deleted_by", "deleted_at"].includes(k)) return;
+      out[humanizeKey(k)] = v;
+    });
+    return out;
+  });
+}
+
+function attendanceExportRow(r, i) {
+  const st = findById("students", r.student_id);
+  return {
+    "No": i + 1,
+    "Tanggal": r.date || "",
+    "NIS": st?.nis || "",
+    "NISN": st?.nisn || "",
+    "Nama Siswa": st?.name || "",
+    "Kelas": displayName("classes", findById("classes", r.class_id)),
+    "Mata Pelajaran": displayName("subjects", findById("subjects", r.subject_id)),
+    "Guru": displayName("teachers", findById("teachers", r.teacher_id)),
+    "Tahun Ajaran": displayName("academic_years", findById("academic_years", r.academic_year_id)),
+    "Semester": displayName("semesters", findById("semesters", r.semester_id)),
+    "Jam Pelajaran": `${r.start_time || ""} - ${r.end_time || ""}`,
+    "Waktu Scan": r.scan_time || "-",
+    "Status": statusLabels[r.status] || titleCase(r.status || ""),
+    "Metode Input": methodLabel(r.input_method),
+    "Keterangan": r.note || ""
+  };
+}
+
+function exportKeys(rows) {
+  return rows.length ? Object.keys(rows[0]) : ["No"];
+}
+
+function exportTitle(name, type) {
+  if (type === "attendance_report") return "LAPORAN ABSENSI SISWA";
+  return `DATA ${humanizeKey(name).toUpperCase()}`;
+}
+
+function methodLabel(method) {
+  return ({ qr: "QR", manual: "Manual", leave_auto: "Izin/Sakit Otomatis", system_auto: "Sistem Alfa" })[method] || method || "";
+}
+
+function humanizeKey(key) {
+  return String(key).replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function titleCase(value) {
+  return String(value || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function parseCsv(text) {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  const headers = lines.shift().split(",").map(s => s.trim());
+  return lines.map(line => Object.fromEntries(line.split(",").map((v, i) => [headers[i], v.trim()])));
+}
+
+function filterSelect(name, label, table) {
+  return `<select name="${name}"><option value="">${label}</option>${state.db[table].filter(r => !r.deleted_at).map(r => `<option value="${r.id}">${escapeHtml(displayName(table, r))}</option>`).join("")}</select>`;
+}
+
+function studentsInClass(classId) {
+  const histories = state.db.student_class_histories.filter(h => h.class_id === classId && h.status === "aktif");
+  const ids = new Set(histories.map(h => h.student_id));
+  return state.db.students.filter(s => !s.deleted_at && s.status === "aktif" && (s.active_class_id === classId || ids.has(s.id)));
+}
+function approvedLeaveFor(studentId, date) { return state.db.leave_requests.find(l => l.student_id === studentId && l.status === "approved" && date >= l.start_date && date <= l.end_date); }
+function isHoliday(date) { return state.db.holidays.some(h => h.date === date && !h.deleted_at); }
+function isActiveRef(table, id) { const r = findById(table, id); return r && r.active !== "false"; }
+function logChange(record, oldStatus, newStatus, reason) { state.db.attendance_logs.push({ id: uid("log"), attendance_record_id: record.id, student_id: record.student_id, old_status: oldStatus, new_status: newStatus, changed_by: currentUser().id, reason, created_at: now() }); }
+function findById(table, id) { return state.db[table].find(r => r.id === id); }
+function refName(table) { return id => escapeHtml(displayName(table, findById(table, id)) || "-"); }
+function displayName(table, row) {
+  if (!row) return "";
+  if (table === "classes") return `${row.name || ""}${row.semester_id ? " - " + displayName("semesters", findById("semesters", row.semester_id)) : ""}`;
+  if (table === "academic_years") return row.name;
+  if (table === "semesters") return row.name;
+  if (table === "subjects") return row.name || row.code;
+  if (table === "teachers" || table === "students" || table === "users") return row.name;
+  return row.name || row.id;
+}
+function dayName(date) { return ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"][date.getDay()]; }
+function badge(status) { return `<span class="badge ${status}">${escapeHtml(statusLabels[status] || statusText(status))}</span>`; }
+function statusText(v) { return ({ open: "Terbuka", closed: "Tertutup", cancelled: "Dibatalkan", true: "Aktif", false: "Nonaktif" })[v] || v || "-"; }
+function boolText(v) { return v === true || v === "true" ? "Aktif" : "Nonaktif"; }
+function byId(id) { return document.getElementById(id); }
+function formData(form) { return Object.fromEntries(new FormData(form).entries()); }
+function emptyRow(cols) { return `<tr><td colspan="${cols}" class="muted">Belum ada data.</td></tr>`; }
+function escapeHtml(v) { return String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function csvCell(v) { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s; }
+function modal(title, body) {
+  closeModal();
+  const el = document.createElement("div");
+  el.className = "modal-backdrop";
+  el.id = "modal-backdrop";
+  el.innerHTML = `<section class="modal"><div class="modal-head"><h2>${escapeHtml(title)}</h2><button class="icon-btn" data-close aria-label="Tutup">×</button></div>${body}</section>`;
+  document.body.appendChild(el);
+  el.querySelectorAll("[data-close]").forEach(b => b.onclick = closeModal);
+}
+function closeModal() { byId("modal-backdrop")?.remove(); }
+function toast(msg, type = "ok") {
+  const t = byId("toast");
+  t.textContent = msg; t.className = `toast ${type} show`;
+  setTimeout(() => t.classList.remove("show"), 2800);
+}
+function successBeep() { beep(660, 80); }
+function failBeep() { beep(180, 150); }
+function beep(freq, ms) {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = freq; osc.connect(gain); gain.connect(ctx.destination); osc.start();
+    setTimeout(() => { osc.stop(); ctx.close(); }, ms);
+  } catch {}
+}

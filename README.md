@@ -12,6 +12,29 @@ python -m http.server 4173 --bind 127.0.0.1
 
 Lalu buka `http://127.0.0.1:4173/`.
 
+## Deploy online ke Vercel
+
+Aplikasi ini butuh database online agar data sama di semua perangkat. Jangan deploy hanya sebagai static HTML tanpa database, karena `localStorage` akan membuat setiap HP/laptop punya data sendiri.
+
+Langkah deploy:
+
+1. Buat repository GitHub dan upload semua file project ini.
+2. Login ke Vercel.
+3. Import repository ini sebagai project baru.
+4. Di Vercel project, buka tab `Storage`.
+5. Buat `Postgres` database.
+6. Hubungkan database Postgres itu ke project ini. Vercel akan otomatis membuat environment variable database.
+7. Deploy ulang project.
+8. Buka domain Vercel, contoh `https://nama-project.vercel.app`.
+
+Setelah Postgres terhubung:
+
+- Semua perangkat membaca data yang sama dari `/api/state`.
+- Scan QR dari HP guru akan tersimpan ke database online.
+- Siswa, wali kelas, kepala sekolah, dan administrator akan melihat perubahan yang sama setelah halaman dimuat ulang.
+
+Jika database Vercel belum dikonfigurasi, aplikasi masih bisa dibuka tetapi akan fallback ke `localStorage`, sehingga data tiap perangkat tetap berbeda.
+
 ## Alur awal
 
 1. Login sebagai Administrator.

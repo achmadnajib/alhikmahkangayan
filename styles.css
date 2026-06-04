@@ -1065,3 +1065,1013 @@ td, th { line-height: 1.35; }
     border-radius: 18px;
   }
 }
+
+.class-overview-table table {
+  min-width: 1020px;
+  border-collapse: separate;
+  border-spacing: 8px;
+  background: transparent;
+}
+
+.class-overview-table {
+  border: 0;
+  background: transparent;
+}
+
+.class-overview-table th,
+.class-overview-table td {
+  border: 1px solid #dbe5f3;
+  border-radius: 10px;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, .03);
+}
+
+.class-overview-table th {
+  background: #f8fafc;
+  color: #1e293b;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.class-overview-table td {
+  background: #ffffff;
+  vertical-align: middle;
+}
+
+.class-overview-table tbody tr:hover td {
+  background: #f9fbff;
+  border-color: #cbd8ee;
+}
+
+.class-overview-table .row-actions {
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.class-overview-table .row-actions button {
+  border-radius: 10px;
+  min-height: 36px;
+  padding: 8px 14px;
+  white-space: nowrap;
+}
+
+.admin-workflow {
+  padding: 26px;
+}
+
+.workflow-head {
+  align-items: center;
+}
+
+.eyebrow {
+  display: inline-flex;
+  margin-bottom: 6px;
+  color: #4f46e5;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.workflow-actions {
+  justify-content: flex-end;
+}
+
+.workflow-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.workflow-stats .card {
+  min-height: 78px;
+}
+
+.workflow-search {
+  margin: 8px 0 18px;
+}
+
+.workflow-search input {
+  max-width: 520px;
+}
+
+.class-management-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+.class-management-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  background: #ffffff;
+  border: 1px solid #dbe5f3;
+  border-radius: 16px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, .06);
+}
+
+.class-card-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.class-label {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.class-management-card h3 {
+  margin: 3px 0;
+  color: #020617;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.class-management-card p {
+  margin: 0;
+  color: #475569;
+  font-weight: 700;
+}
+
+.student-count {
+  min-width: 78px;
+  padding: 12px;
+  text-align: center;
+  background: #eef2ff;
+  border-radius: 14px;
+}
+
+.student-count strong {
+  display: block;
+  color: #312e81;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.student-count span {
+  color: #475569;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.subject-count {
+  background: #ecfdf5;
+}
+
+.subject-count strong {
+  color: #047857;
+}
+
+.subject-class-card {
+  border-color: #cfe8df;
+}
+
+.subject-class-card:hover {
+  box-shadow: 0 26px 64px rgba(16, 185, 129, .12);
+}
+
+.subject-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 34px;
+}
+
+.subject-chip-list span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.schedule-day-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.schedule-day-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  background: #ffffff;
+  border: 1px solid #dbe5f3;
+  border-radius: 18px;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, .07);
+}
+
+.schedule-day-card h3 {
+  margin: 4px 0;
+  color: #111827;
+  font-size: 24px;
+}
+
+.schedule-day-card p {
+  margin: 0;
+  color: #64748b;
+  font-weight: 800;
+}
+
+.class-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.class-meta-grid span {
+  min-width: 0;
+  padding: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+
+.class-meta-grid small {
+  display: block;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.class-meta-grid strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 4px;
+  color: #0f172a;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.class-card-actions {
+  display: grid;
+  grid-template-columns: 1fr minmax(160px, 190px);
+  gap: 10px;
+}
+
+.class-card-actions button,
+.class-card-actions select {
+  min-height: 42px;
+}
+
+.class-card-actions select {
+  width: 100%;
+  border: 1px solid #d7deea;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #172033;
+  font-weight: 800;
+}
+
+.empty-state {
+  padding: 28px;
+  color: #64748b;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  font-weight: 800;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .workflow-stats,
+  .class-meta-grid,
+  .class-card-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-workflow {
+    padding: 16px;
+  }
+}
+
+/* Yellow theme and mobile stability pass. */
+:root {
+  --bg: #fff8dc;
+  --panel: #fffefa;
+  --brand: #d8a600;
+  --brand-2: #f6c100;
+  --line: #eadfba;
+  --shadow: 0 22px 54px rgba(124, 86, 0, .13);
+}
+
+body {
+  background: linear-gradient(90deg, #fff2a8 0 34%, #ffd21c 34% 72%, #fff 72% 100%);
+}
+
+.primary,
+#menu button.active {
+  background: linear-gradient(135deg, #ffd21c, #f0b90b);
+  color: #151515;
+}
+
+.secondary {
+  background: #fff4bf;
+  color: #6f4e00;
+}
+
+.topbar,
+.panel,
+.card,
+.class-management-card,
+.modal,
+.table-wrap {
+  background: rgba(255, 255, 255, .94);
+  border-color: #eadfba;
+}
+
+.sidebar {
+  background: linear-gradient(180deg, #171408, #2a2105 70%, #3c2f08);
+}
+
+.role-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.role-card,
+.leave-class-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  background: #fffefa;
+  border: 1px solid #eadfba;
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+}
+
+.role-card h3 {
+  margin: 4px 0;
+  color: #151515;
+  font-size: 20px;
+  line-height: 1.15;
+}
+
+.role-card p {
+  margin: 0;
+  color: #6f5d2d;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.role-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.leave-count {
+  background: #fff4bf;
+}
+
+.leave-count strong {
+  color: #9a6d00;
+}
+
+@media (max-width: 980px) {
+  .sidebar {
+    height: 76px;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    padding: 0 6px;
+    overflow: hidden;
+    background: rgba(31, 26, 10, .94);
+    border-color: rgba(255, 210, 28, .4);
+  }
+
+  #menu {
+    display: flex !important;
+    justify-content: flex-start !important;
+    gap: 8px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    padding: 8px 2px;
+    scrollbar-width: none;
+  }
+
+  #menu::-webkit-scrollbar {
+    display: none;
+  }
+
+  #menu .menu-group {
+    display: contents !important;
+  }
+
+  #menu .menu-label {
+    display: none !important;
+  }
+
+  #menu button,
+  #menu button:nth-child(2),
+  #menu button:nth-child(3),
+  #menu button[data-page="attendance"],
+  #menu button[data-page="my_qr"] {
+    position: static !important;
+    flex: 0 0 84px !important;
+    width: 84px !important;
+    height: 54px !important;
+    min-height: 54px !important;
+    margin: 0 !important;
+    padding: 6px 5px !important;
+    transform: none !important;
+    border: 0 !important;
+    border-radius: 16px !important;
+    background: rgba(255,255,255,.08) !important;
+    color: #fff7cc !important;
+    box-shadow: none !important;
+    font-size: 10px !important;
+    line-height: 1.15 !important;
+    white-space: normal !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  #menu button.active,
+  #menu button[data-page="attendance"].active,
+  #menu button[data-page="my_qr"].active {
+    background: linear-gradient(135deg, #ffd21c, #f0b90b) !important;
+    color: #151515 !important;
+  }
+
+  .form-grid,
+  .summary-grid,
+  .role-card-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .modal {
+    width: min(100%, 760px);
+    max-height: 88vh;
+    border-radius: 20px;
+  }
+
+  .table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  th,
+  td {
+    white-space: normal;
+    min-width: 88px;
+  }
+}
+
+/* Final administrator polish: simpler navigation and floating popup surfaces. */
+body {
+  background:
+    linear-gradient(180deg, #f8fbff 0%, #eef3fb 100%);
+}
+
+.sidebar {
+  background: linear-gradient(180deg, #0d1526, #111827 62%, #172033);
+  box-shadow: 18px 0 42px rgba(15, 23, 42, .18);
+}
+
+#menu {
+  gap: 14px;
+}
+
+.menu-group {
+  display: grid;
+  gap: 5px;
+}
+
+.menu-label {
+  padding: 0 12px 3px;
+  color: #93a4bd;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+
+#menu button {
+  border: 1px solid transparent;
+  border-radius: 14px;
+  font-weight: 850;
+}
+
+#menu button.active {
+  background: linear-gradient(135deg, #5547e9, #3b2bd6);
+  color: #fff;
+  box-shadow: 0 14px 26px rgba(85, 71, 233, .28);
+}
+
+#menu button:hover:not(.active) {
+  background: rgba(255,255,255,.08);
+  border-color: rgba(255,255,255,.08);
+}
+
+.topbar {
+  margin: 12px 16px 0;
+  border: 1px solid rgba(219, 227, 238, .9);
+  border-radius: 24px;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, .08);
+}
+
+.content {
+  padding: 22px 28px 32px;
+}
+
+.panel,
+.card,
+.class-management-card,
+.modal {
+  border: 1px solid rgba(219, 227, 238, .95);
+  border-radius: 24px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, .09);
+}
+
+.panel {
+  padding: 24px;
+}
+
+.panel-head {
+  align-items: center;
+  gap: 18px;
+}
+
+.crud-toolbar {
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.table-action-select,
+.class-card-actions select {
+  cursor: pointer;
+  min-height: 42px;
+  padding: 9px 14px;
+  border-radius: 14px;
+  background: #f8fafc;
+  border-color: #d7deea;
+  color: #172033;
+  font-weight: 850;
+}
+
+.primary,
+.secondary,
+.danger,
+.ghost {
+  border-radius: 14px;
+}
+
+.table-wrap {
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgba(219, 227, 238, .75);
+}
+
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+th {
+  background: #f8fafc;
+  color: #1f2937;
+  font-weight: 900;
+}
+
+td {
+  background: #fff;
+}
+
+tbody tr:hover td {
+  background: #f8fbff;
+}
+
+.modal-backdrop {
+  background: rgba(15, 23, 42, .5);
+  backdrop-filter: blur(10px);
+}
+
+.modal {
+  padding: 22px;
+}
+
+.modal-head {
+  padding-bottom: 12px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.modal-head .icon-btn {
+  border-radius: 14px;
+  background: #eef2ff;
+  color: #3526ca;
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    margin: 8px 8px 0;
+    border-radius: 18px;
+  }
+
+  .content {
+    padding: 14px 10px 96px;
+  }
+
+  .panel {
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .crud-toolbar,
+  .workflow-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .crud-toolbar > *,
+  .workflow-actions > * {
+    width: 100%;
+  }
+}
+
+/* Final yellow theme and responsive cleanup. Keep this block last. */
+:root {
+  --bg: #fff9df;
+  --panel: #fffefa;
+  --text: #151515;
+  --muted: #74694c;
+  --line: #eadfba;
+  --brand: #d99b00;
+  --brand-2: #ffd21c;
+  --shadow: 0 22px 54px rgba(124, 86, 0, .13);
+}
+
+body {
+  background: linear-gradient(90deg, #fff4aa 0 32%, #ffd21c 32% 68%, #fff 68% 100%);
+}
+
+.auth-shell {
+  background-color: #19160b;
+  background-image: radial-gradient(rgba(255, 210, 28, .38) 1px, transparent 1px);
+}
+
+.auth-panel,
+.topbar,
+.panel,
+.card,
+.class-management-card,
+.modal,
+.table-wrap {
+  background: rgba(255, 255, 255, .96);
+  border-color: #eadfba;
+}
+
+.logo-mark,
+.login-button,
+.primary,
+#menu button.active,
+.quick-tools button.active,
+.total-card {
+  background: linear-gradient(135deg, #ffd21c, #f0b90b);
+  color: #151515;
+}
+
+.login-brand,
+.forgot-link,
+.login-help strong,
+.eyebrow {
+  color: #9a6d00;
+}
+
+.login-footer span,
+.secondary,
+.status-badge,
+.table-action-select,
+.class-card-actions select {
+  background: #fff4bf;
+  color: #6f4e00;
+  border-color: #eadfba;
+}
+
+.sidebar {
+  background: linear-gradient(180deg, #151207, #2b2207 68%, #403208);
+  color: #fff7d0;
+}
+
+.sidebar .ghost {
+  background: rgba(255, 210, 28, .14);
+  color: #fff7d0;
+}
+
+#menu button {
+  color: #fff4bf;
+}
+
+#menu button:hover:not(.active) {
+  background: rgba(255, 210, 28, .12);
+  border-color: rgba(255, 210, 28, .2);
+}
+
+.menu-label {
+  color: #e5c963;
+}
+
+tbody tr:hover td {
+  background: #fff9df;
+}
+
+.role-card-grid,
+.leave-class-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 16px;
+}
+
+.role-card,
+.leave-class-card {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  background: #fffefa;
+  border: 1px solid #eadfba;
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+}
+
+.role-card h3,
+.leave-class-card h3 {
+  margin: 4px 0;
+  color: #151515;
+  font-size: 20px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.role-card p,
+.leave-class-card p {
+  margin: 0;
+  color: #74694c;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.role-card-foot,
+.leave-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.leave-counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.leave-count {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #eadfba;
+  border-radius: 16px;
+  background: #fff4bf;
+}
+
+.leave-count span {
+  display: block;
+  color: #74694c;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.leave-count strong {
+  display: block;
+  margin-top: 4px;
+  color: #9a6d00;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.class-management-card,
+.class-card-main,
+.panel-head,
+.crud-toolbar,
+.quick-tools,
+.user-pill {
+  min-width: 0;
+}
+
+.class-management-card h3,
+.panel-head h2,
+.topbar h1 {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 980px) {
+  body {
+    background: linear-gradient(180deg, #fff7c2 0, #fffefa 280px, #fff9df 100%);
+  }
+
+  .app {
+    display: block;
+    padding-bottom: 86px;
+  }
+
+  .workspace {
+    width: 100%;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: auto 8px 8px;
+    z-index: 30;
+    height: 74px;
+    padding: 8px;
+    border-radius: 22px;
+    overflow: hidden;
+    box-shadow: 0 18px 38px rgba(21, 18, 7, .24);
+  }
+
+  .brand,
+  .sidebar > .ghost,
+  #menu .menu-label {
+    display: none !important;
+  }
+
+  #menu {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0;
+    scrollbar-width: none;
+  }
+
+  #menu::-webkit-scrollbar {
+    display: none;
+  }
+
+  #menu .menu-group {
+    display: contents;
+  }
+
+  #menu button,
+  #menu button[data-page="attendance"],
+  #menu button[data-page="my_qr"] {
+    position: static !important;
+    transform: none !important;
+    flex: 0 0 78px !important;
+    width: 78px !important;
+    min-width: 78px !important;
+    height: 56px !important;
+    min-height: 56px !important;
+    margin: 0 !important;
+    padding: 7px 6px !important;
+    border: 0 !important;
+    border-radius: 16px !important;
+    box-shadow: none !important;
+    text-align: center;
+    white-space: normal !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    font-size: 10px !important;
+    line-height: 1.12 !important;
+  }
+
+  #menu button.active,
+  #menu button[data-page="attendance"].active,
+  #menu button[data-page="my_qr"].active {
+    box-shadow: 0 10px 20px rgba(240, 185, 11, .28) !important;
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    height: auto;
+    min-height: 64px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    margin: 8px;
+    padding: 10px;
+    border-radius: 20px;
+  }
+
+  .topbar h1 {
+    font-size: 18px;
+    line-height: 1.2;
+  }
+
+  .quick-tools,
+  .user-pill {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .quick-tools {
+    display: flex;
+    overflow-x: auto;
+    gap: 8px;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+
+  .quick-tools::-webkit-scrollbar {
+    display: none;
+  }
+
+  .quick-tools button {
+    flex: 0 0 auto;
+    min-height: 38px;
+    white-space: nowrap;
+  }
+
+  .user-pill {
+    justify-content: space-between;
+  }
+
+  .content {
+    padding: 12px 10px 104px;
+  }
+
+  .panel {
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .panel-head,
+  .crud-toolbar,
+  .workflow-actions,
+  .class-card-actions,
+  .role-card-foot,
+  .leave-card-foot {
+    align-items: stretch;
+  }
+
+  .crud-toolbar > *,
+  .workflow-actions > *,
+  .class-card-actions > *,
+  .role-card-foot > *,
+  .leave-card-foot > * {
+    width: 100%;
+  }
+
+  .form-grid,
+  .summary-grid,
+  .class-management-grid,
+  .schedule-day-grid,
+  .role-card-grid,
+  .leave-class-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .leave-counts {
+    grid-template-columns: 1fr;
+  }
+
+  .modal {
+    width: calc(100vw - 16px);
+    max-height: 88vh;
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .modal-head {
+    gap: 10px;
+  }
+
+  .table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  table {
+    min-width: 680px;
+  }
+
+  th,
+  td {
+    white-space: nowrap;
+    min-width: 92px;
+    padding: 11px 10px;
+  }
+}

@@ -6,12 +6,18 @@ function connectionString() {
   return process.env.POSTGRES_URL || process.env.POSTGRES_PRISMA_URL || process.env.POSTGRES_URL_NON_POOLING;
 }
 
+function sanitizedConnectionString(url) {
+  const parsed = new URL(url);
+  ["sslmode", "sslcert", "sslkey", "sslrootcert"].forEach(key => parsed.searchParams.delete(key));
+  return parsed.toString();
+}
+
 function db() {
   const url = connectionString();
   if (!url) throw new Error("POSTGRES_URL belum tersedia di Environment Variables Vercel.");
   if (!pool) {
     pool = new Pool({
-      connectionString: url,
+      connectionString: sanitizedConnectionString(url),
       ssl: { rejectUnauthorized: false },
       max: 1
     });

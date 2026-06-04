@@ -2051,9 +2051,8 @@ function confirmLeaveOverride(session, student, existing, leave) {
 
 function scanStatus(session) {
   const tolerance = Number(state.db.settings[0]?.late_tolerance_minutes || 15);
-  const start = new Date(`${session.date}T${session.start_time || "00:00"}`);
-  const limit = new Date(start.getTime() + tolerance * 60000);
-  return new Date() <= limit ? "hadir" : "terlambat";
+  const limitMinutes = timeToMinutes(session.start_time) + tolerance;
+  return currentMinutes() <= limitMinutes ? "hadir" : "terlambat";
 }
 
 function upsertRecord(session, student, status, method, note) {

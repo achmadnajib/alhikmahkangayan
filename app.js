@@ -1,5 +1,6 @@
 const DB_KEY = "alhikmah_attendance_v1";
 const SESSION_KEY = "alhikmah_session_v1";
+const YEAR_KEY = "alhikmah_selected_academic_year";
 
 const roles = {
   super_admin: "Administrator",
@@ -172,7 +173,7 @@ const schemas = {
   }
 };
 
-const state = { db: null, session: null, page: "dashboard", filters: {}, videoStream: null, remoteDb: false, saveTimer: null };
+const state = { db: null, session: null, page: "dashboard", filters: {}, selectedAcademicYearId: "", videoStream: null, remoteDb: false, saveTimer: null };
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -193,8 +194,8 @@ function emptyDb() {
 
 async function init() {
   state.db = await loadDb();
-  sessionStorage.removeItem(SESSION_KEY);
-  state.session = null;
+  state.selectedAcademicYearId = resolveStoredAcademicYearId();
+  state.session = loadSession();
   bindAuth();
   bindShell();
   if (!state.db.users.length) showSetup();
@@ -209,7 +210,8 @@ async function loadDb() {
       state.remoteDb = true;
       const payload = await response.json();
       const localRaw = localStorage.getItem(DB_KEY);
-      const db = payload.db ? normalizeDb(payload.db) : localRaw ? normalizeDb(JSON.parse(localRaw)) : emptyDb();
+      const sourceDb = payload.db || (localRaw ? JSON.parse(localRaw) : emptyDb());
+      const db = normalizeDb(sourceDb);
       if (!payload.db) await persistRemoteDb(db);
       localStorage.setItem(DB_KEY, JSON.stringify(db));
       return db;
@@ -483,8 +485,8 @@ async function persistRemoteDb(db) {
     toast("Database online gagal disimpan. Cek konfigurasi Vercel/Postgres.", "error");
   }
 }
-function loadSession() { return JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null"); }
-function saveSession(session) { sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); state.session = session; }
+function loadSession() { return JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); }
+function saveSession(session) { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); state.session = session; }
 function now() { return new Date().toISOString(); }
 function today() { return new Date().toISOString().slice(0, 10); }
 function uid(prefix) { return `${prefix}_${crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2)}`; }
@@ -583,7 +585,7 @@ function teacherHasTeachingSchedule(teacherId) {
 
 function bindShell() {
   byId("logout").onclick = () => {
-    sessionStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(SESSION_KEY);
     stopCamera();
     state.session = null;
     showLogin();
@@ -625,8 +627,8 @@ function landingPageForRole(role) {
     siswa: "dashboard"
   })[role] || "dashboard";
 }
-function canDelete() { return currentUser().role === "super_admin"; }
-function canEditMaster() { return currentUser().role === "super_admin"; }
+function canDelete() { return ["super_admin", "kepala_sekolah"].includes(currentUser().role); }
+function canEditMaster() { return ["super_admin", "kepala_sekolah"].includes(currentUser().role); }
 function canReport() { return ["super_admin", "guru", "wali_kelas", "kepala_sekolah"].includes(currentUser().role); }
 function canCreateLeaveRequest(table) { return table === "leave_requests" && ["super_admin", "guru", "wali_kelas"].includes(currentUser().role); }
 function canApproveLeaveFor(classId) {
@@ -640,7 +642,7 @@ function canAccess(page) { return menuItemsForCurrentUser().some(([id]) => id ==
 function renderMenu() {
   const items = menuItemsForCurrentUser();
   byId("menu").dataset.role = currentUser().role;
-  if (currentUser().role === "super_admin") {
+  if (["super_admin", "kepala_sekolah"].includes(currentUser().role)) {
     byId("menu").innerHTML = adminMenuGroups().map(group => `
       <div class="menu-group">
         <span class="menu-label">${group.label}</span>
@@ -669,7 +671,7 @@ function menuItemsForCurrentUser() {
     ["attendance", "Sesi & Scan QR", ["super_admin", "guru"].includes(user.role)],
     ["my_qr", "QR Saya", user.role === "siswa"],
     ["history", "History", ["super_admin", "guru", "wali_kelas", "kepala_sekolah", "siswa"].includes(user.role)],
-    ["students", "Siswa", canEditMaster() || user.role === "wali_kelas"],
+    ["students", "Siswa & Kelas", canEditMaster() || user.role === "wali_kelas"],
     ["teachers", "Guru", canEditMaster()],
     ["classes", "Kelas", canEditMaster()],
     ["subjects", "Mapel & Jadwal", canEditMaster()],
@@ -681,7 +683,7 @@ function menuItemsForCurrentUser() {
     ["leave_requests", "Izin & Sakit", ["super_admin", "guru", "wali_kelas"].includes(user.role)],
     ["reports", "Laporan", canReport()],
     ["users", "Pengguna & Role", user.role === "super_admin"],
-    ["settings", "Pengaturan", user.role === "super_admin"],
+    ["settings", "Pengaturan", canEditMaster()],
     ["profile", "Profil Saya", user.role !== "siswa"]
   ].filter(i => i[2]);
 }
@@ -709,7 +711,7 @@ function navigate(page) {
 
 function renderQuickTools() {
   const user = currentUser();
-  if (user.role === "super_admin") {
+  if (["super_admin", "kepala_sekolah"].includes(user.role)) {
     const tools = [
       ["dashboard", "Dashboard", "D", canAccess("dashboard")],
       ["students", "Siswa", "S", canAccess("students")],
@@ -741,10 +743,14 @@ function renderDashboard() {
   if (role === "wali_kelas") return renderHomeroomDashboard();
   if (role === "kepala_sekolah") return renderHeadmasterDashboard();
   const date = today();
-  const recordsToday = state.db.attendance_records.filter(r => r.date === date);
+  const recordsToday = recordsForSelectedYear().filter(r => r.date === date);
   const stat = s => recordsToday.filter(r => r.status === s).length;
-  const activeSession = state.db.attendance_sessions.find(s => s.date === date && s.status === "open") || state.db.attendance_sessions.find(s => s.date === date);
-  const classCount = activeSession ? studentsInClass(activeSession.class_id).length : state.db.students.filter(s => s.status === "aktif").length;
+  const sessionsThisYear = filterBySelectedAcademicYear("attendance_sessions", state.db.attendance_sessions.filter(s => !s.deleted_at));
+  const schedulesThisYear = schedulesForSelectedYear(state.db.schedules.filter(s => !s.deleted_at));
+  const studentsThisYear = visibleRows("students").filter(s => s.status === "aktif");
+  const classesThisYear = classesForSelectedYear();
+  const activeSession = sessionsThisYear.find(s => s.date === date && s.status === "open") || sessionsThisYear.find(s => s.date === date);
+  const classCount = activeSession ? studentsInClass(activeSession.class_id).length : studentsThisYear.length;
   const presentCount = stat("hadir");
   const lateCount = stat("terlambat");
   const leaveCount = stat("izin");
@@ -771,32 +777,36 @@ function renderDashboard() {
       <article class="pending-card"><strong>${absentPending}</strong><span>Belum Absen</span></article>
     </section>
     <section class="cards desktop-only">
-      ${card("Siswa Aktif", state.db.students.filter(s => s.status === "aktif").length)}
+      ${card("Siswa Aktif", studentsThisYear.length)}
       ${card("Guru Aktif", state.db.teachers.filter(t => t.active !== "false").length)}
-      ${card("Kelas Aktif", state.db.classes.length)}
-      ${card("Sesi Hari Ini", state.db.attendance_sessions.filter(s => s.date === date).length)}
+      ${card("Kelas Aktif", classesThisYear.length)}
+      ${card("Sesi Hari Ini", sessionsThisYear.filter(s => s.date === date).length)}
     </section>
     <section class="panel">
-      <div class="panel-head"><div><h2>Ringkasan Operasional</h2><p class="muted">Dashboard mengikuti data real yang sudah dimasukkan.</p></div></div>
+      <div class="panel-head"><div><h2>Ringkasan Operasional</h2><p class="muted">Dashboard mengikuti data tahun ajaran ${escapeHtml(selectedAcademicYearName())}.</p></div><div class="actions">${academicYearSwitcher("dashboard")}</div></div>
       <div class="table-wrap"><table><thead><tr><th>Area</th><th>Informasi</th></tr></thead><tbody>
-        <tr><td>Guru</td><td>${state.db.schedules.filter(s => s.active !== "false").length} jadwal aktif, ${state.db.attendance_sessions.filter(s => s.status === "open").length} sesi berjalan.</td></tr>
-        <tr><td>Wali Kelas</td><td>${state.db.leave_requests.filter(l => l.status === "pending").length} pengajuan izin menunggu persetujuan.</td></tr>
+        <tr><td>Guru</td><td>${schedulesThisYear.filter(s => s.active !== "false").length} jadwal aktif, ${sessionsThisYear.filter(s => s.status === "open").length} sesi berjalan.</td></tr>
+        <tr><td>Wali Kelas</td><td>${visibleRows("leave_requests").filter(l => l.status === "pending").length} pengajuan izin menunggu persetujuan.</td></tr>
         <tr><td>Kepala Sekolah</td><td>Laporan harian, bulanan, semester, kelas, dan mapel tersedia di menu Laporan.</td></tr>
       </tbody></table></div>
     </section>`;
+  bindAcademicYearSwitcher(renderDashboard);
 }
 
 function renderStudentDashboard() {
   const user = currentUser();
   const student = state.db.students.find(s => s.id === user.student_id);
   if (!student) return renderProfile();
-  const cls = findById("classes", student.active_class_id);
-  const records = state.db.attendance_records.filter(r => r.student_id === student.id);
+  const cls = studentClassForSelectedYear(student) || findById("classes", student.active_class_id);
+  const records = recordsForSelectedYear().filter(r => r.student_id === student.id);
   const todayRecords = records.filter(r => r.date === today());
   const totals = attendanceTotals(records);
   const pct = totals.total ? (((totals.hadir + totals.terlambat) / totals.total) * 100).toFixed(1) : "0.0";
-  const todaySchedules = schedulesTodayForClass(student.active_class_id);
+  const todaySchedules = cls ? schedulesTodayForClass(cls.id) : [];
   byId("view").innerHTML = `
+    <section class="panel">
+      <div class="panel-head"><div><h2>${escapeHtml(dailyStudentMessage(student))}</h2><p class="muted">Semangat belajar hari ini. Data dashboard mengikuti tahun ajaran ${escapeHtml(selectedAcademicYearName())}.</p></div><div class="actions">${academicYearSwitcher("student-dashboard")}</div></div>
+    </section>
     <section class="student-home">
       <article class="student-card">
         <div>
@@ -834,6 +844,40 @@ function renderStudentDashboard() {
         ${todayRecords.map(r => `<tr><td>${refName("subjects")(r.subject_id)}</td><td>${refName("teachers")(r.teacher_id)}</td><td>${escapeHtml(r.start_time)} - ${escapeHtml(r.end_time)}</td><td>${badge(r.status)}</td></tr>`).join("") || emptyRow(4)}
       </tbody></table></div>
     </section>`;
+  bindAcademicYearSwitcher(renderStudentDashboard);
+}
+
+function studentClassForSelectedYear(student) {
+  if (student.active_academic_year_id === selectedAcademicYearId()) return findById("classes", student.active_class_id);
+  const history = state.db.student_class_histories.find(item =>
+    item.student_id === student.id &&
+    item.academic_year_id === selectedAcademicYearId() &&
+    !item.deleted_at
+  );
+  return history ? findById("classes", history.class_id) : null;
+}
+
+function dailyStudentMessage(student) {
+  const messages = [
+    "Buku tidak akan terbuka sendiri, jadi mari bantu dia sedikit hari ini.",
+    "Nilai bagus jarang datang karena kasihan, biasanya karena belajar.",
+    "Datang tepat waktu itu gratis, tapi efeknya mahal untuk masa depan.",
+    "Otak juga butuh pemanasan, bukan cuma jempol saat scroll.",
+    "Tugas tidak akan mengerjakan dirinya sendiri, sayangnya begitu.",
+    "Belajar sebentar tetap lebih keren daripada menyesal satu semester.",
+    "Kalau belum paham, itu tanda belajar dimulai, bukan tanda menyerah.",
+    "Hari ini boleh santai, asal ilmunya tetap masuk.",
+    "Absensi hadir dulu, prestasi menyusul kalau usahanya tidak kabur.",
+    "Masa depan tidak bisa di-scan QR, tapi bisa disiapkan dari kelas ini.",
+    "Pelajaran hari ini mungkin terlihat kecil, sampai keluar di ujian.",
+    "Kalau malas datang, ingat nilai tidak bisa naik karena niat saja.",
+    "Satu halaman dibaca hari ini lebih berguna daripada seribu alasan.",
+    "Pintar itu proses, bukan fitur bawaan yang bisa diaktifkan mendadak."
+  ];
+  const key = `${today()}-${student.id}`;
+  let hash = 0;
+  for (const ch of key) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return messages[hash % messages.length];
 }
 
 function showMyQr() {
@@ -848,9 +892,9 @@ function renderTeacherDashboard() {
   const teacher = state.db.teachers.find(t => t.id === user.teacher_id);
   const date = today();
   const day = dayName(new Date());
-  const schedules = state.db.schedules.filter(s => s.teacher_id === teacher?.id && s.day === day && s.active !== "false");
-  const sessions = state.db.attendance_sessions.filter(s => s.teacher_id === teacher?.id && s.date === date);
-  const records = state.db.attendance_records.filter(r => r.teacher_id === teacher?.id && r.date === date);
+  const schedules = schedulesForSelectedYear().filter(s => s.teacher_id === teacher?.id && s.day === day && s.active !== "false");
+  const sessions = filterBySelectedAcademicYear("attendance_sessions", state.db.attendance_sessions).filter(s => s.teacher_id === teacher?.id && s.date === date);
+  const records = recordsForSelectedYear().filter(r => r.teacher_id === teacher?.id && r.date === date);
   const totals = attendanceTotals(records);
   byId("view").innerHTML = `
     <section class="mobile-dashboard">
@@ -860,15 +904,15 @@ function renderTeacherDashboard() {
         <div><b>▦</b> ${schedules.length} jadwal hari ini <b>◷</b> ${sessions.filter(s => s.status === "open").length} sesi berjalan</div>
       </article>
       <div class="mini-stats">
-        <article><strong class="ok-text">${totals.hadir}</strong><span>Hadir</span></article>
-        <article><strong>${totals.terlambat}</strong><span>Terlambat</span></article>
-        <article><strong>${totals.izin}</strong><span>Izin</span></article>
-        <article><strong class="danger-text">${totals.alfa}</strong><span>Alfa</span></article>
+        ${dashboardStatusCard("hadir", totals.hadir)}
+        ${dashboardStatusCard("terlambat", totals.terlambat)}
+        ${dashboardStatusCard("izin", totals.izin)}
+        ${dashboardStatusCard("alfa", totals.alfa)}
       </div>
       <article class="pending-card"><strong>${sessions.filter(s => s.status === "open").length}</strong><span>Sesi Aktif</span></article>
     </section>
     <section class="panel">
-      <div class="panel-head"><div><h2>Jadwal Mengajar Hari Ini</h2><p class="muted">Buka sesi dari jadwal, lalu scan QR siswa.</p></div></div>
+      <div class="panel-head"><div><h2>Jadwal Mengajar Hari Ini</h2><p class="muted">Buka sesi dari jadwal tahun ajaran ${escapeHtml(selectedAcademicYearName())}, lalu scan QR siswa.</p></div><div class="actions">${academicYearSwitcher("teacher-dashboard")}</div></div>
       <div class="table-wrap"><table><thead><tr><th>Kelas</th><th>Mapel</th><th>Jam</th><th>Status</th></tr></thead><tbody>
         ${schedules.map(s => {
           const ses = state.db.attendance_sessions.find(x => x.schedule_id === s.id && x.date === date && x.status !== "cancelled");
@@ -876,11 +920,13 @@ function renderTeacherDashboard() {
         }).join("") || emptyRow(4)}
       </tbody></table></div>
     </section>`;
+  bindAcademicYearSwitcher(renderTeacherDashboard);
+  bindDashboardStatusCards(records, "Dashboard Guru");
 }
 
 function schedulesTodayForClass(classId) {
   const day = dayName(new Date());
-  return state.db.schedules
+  return schedulesForSelectedYear()
     .filter(s => !s.deleted_at && s.active !== "false" && s.class_id === classId && s.day === day)
     .sort((a, b) => timeToMinutes(a.start_time) - timeToMinutes(b.start_time));
 }
@@ -888,7 +934,7 @@ function schedulesTodayForClass(classId) {
 function studentTodayScheduleRow(schedule, studentId) {
   const session = todaySessionForSchedule(schedule.id);
   const record = session ? state.db.attendance_records.find(r => r.session_id === session.id && r.student_id === studentId) : null;
-  const status = record ? badge(record.status) : session ? badge(session.status) : studentScheduleStatusText(schedule);
+  const status = record ? badge(record.status) : studentScheduleStatusText(schedule, session);
   return `<tr>
     <td>${refName("subjects")(schedule.subject_id)}</td>
     <td>${refName("teachers")(schedule.teacher_id)}</td>
@@ -898,19 +944,21 @@ function studentTodayScheduleRow(schedule, studentId) {
   </tr>`;
 }
 
-function studentScheduleStatusText(schedule) {
-  if (schedule.day !== dayName(new Date())) return `Jadwal ${schedule.day}`;
-  if (isCurrentTimeWithinSchedule(schedule)) return "Menunggu guru membuka sesi";
-  return `Jam ${schedule.start_time} - ${schedule.end_time}`;
+function studentScheduleStatusText(schedule, session = null) {
+  const timing = scheduleTimingState(schedule);
+  if (timing === "wrong_day") return `Jadwal ${schedule.day}`;
+  if (timing === "future") return "Sesi belum dibuka";
+  if (timing === "active") return session ? "Pelajaran sedang dimulai" : "Pelajaran sedang dimulai, sesi belum dibuka guru";
+  return "Sesi sudah lewat. Cek kehadiranmu di history";
 }
 
 function renderHomeroomDashboard() {
   const user = currentUser();
   const teacher = state.db.teachers.find(t => t.id === user.teacher_id);
-  const classes = state.db.classes.filter(c => c.homeroom_teacher_id === teacher?.id);
+  const classes = classesForSelectedYear().filter(c => c.homeroom_teacher_id === teacher?.id);
   const ids = new Set(classes.map(c => c.id));
   const students = state.db.students.filter(s => ids.has(s.active_class_id) && s.status === "aktif");
-  const records = state.db.attendance_records.filter(r => ids.has(r.class_id));
+  const records = recordsForSelectedYear().filter(r => ids.has(r.class_id));
   const totals = attendanceTotals(records);
   const todaySchedules = state.db.schedules
     .filter(s => !s.deleted_at && s.active !== "false" && ids.has(s.class_id) && s.day === dayName(new Date()))
@@ -919,48 +967,52 @@ function renderHomeroomDashboard() {
     <section class="mobile-dashboard">
       <article class="session-hero"><span>Homeroom</span><h2>${escapeHtml(classes.map(c => c.name).join(", ") || "Belum Ada Kelas")}</h2><div><b>♙</b> ${students.length} siswa aktif <b>▣</b> ${state.db.leave_requests.filter(l => ids.has(l.class_id) && l.status === "pending").length} izin menunggu</div></article>
       <div class="mini-stats">
-        <article><strong class="ok-text">${totals.hadir}</strong><span>Hadir</span></article>
-        <article><strong>${totals.terlambat}</strong><span>Terlambat</span></article>
-        <article><strong>${totals.izin}</strong><span>Izin</span></article>
-        <article><strong class="danger-text">${totals.alfa}</strong><span>Alfa</span></article>
+        ${dashboardStatusCard("hadir", totals.hadir)}
+        ${dashboardStatusCard("terlambat", totals.terlambat)}
+        ${dashboardStatusCard("izin", totals.izin)}
+        ${dashboardStatusCard("alfa", totals.alfa)}
       </div>
     </section>
     <section class="panel">
-      <div class="panel-head"><div><h2>Jadwal Kelas Hari Ini</h2><p class="muted">Jadwal hari ini untuk kelas yang dipegang wali kelas.</p></div></div>
+      <div class="panel-head"><div><h2>Jadwal Kelas Hari Ini</h2><p class="muted">Jadwal hari ini untuk kelas yang dipegang wali kelas pada tahun ajaran ${escapeHtml(selectedAcademicYearName())}.</p></div><div class="actions">${academicYearSwitcher("homeroom-dashboard")}</div></div>
       <div class="table-wrap"><table><thead><tr><th>Kelas</th><th>Mapel</th><th>Guru</th><th>Jam</th><th>Status Sesi</th></tr></thead><tbody>
         ${todaySchedules.map(s => `<tr><td>${refName("classes")(s.class_id)}</td><td>${refName("subjects")(s.subject_id)}</td><td>${refName("teachers")(s.teacher_id)}</td><td>${escapeHtml(s.start_time)} - ${escapeHtml(s.end_time)}</td><td>${todaySessionForSchedule(s.id) ? badge(todaySessionForSchedule(s.id).status) : studentScheduleStatusText(s)}</td></tr>`).join("") || emptyRow(5)}
       </tbody></table></div>
     </section>
     <section class="panel"><div class="panel-head"><div><h2>Siswa Perlu Perhatian</h2><p class="muted">Diurutkan dari jumlah alfa dan terlambat tertinggi.</p></div></div>${attentionTable(students, records)}</section>`;
+  bindAcademicYearSwitcher(renderHomeroomDashboard);
+  bindDashboardStatusCards(records, "Dashboard Wali Kelas");
 }
 
 function renderHeadmasterDashboard() {
-  const records = state.db.attendance_records;
+  const records = recordsForSelectedYear();
   const totals = attendanceTotals(records);
   const pct = totals.total ? (((totals.hadir + totals.terlambat) / totals.total) * 100).toFixed(1) : "0.0";
-  const todaySchedules = state.db.schedules.filter(s => !s.deleted_at && s.active !== "false" && s.day === dayName(new Date()));
+  const todaySchedules = schedulesForSelectedYear().filter(s => !s.deleted_at && s.active !== "false" && s.day === dayName(new Date()));
   byId("view").innerHTML = `
     <section class="cards">
-      ${card("Siswa Aktif", state.db.students.filter(s => s.status === "aktif").length)}
+      ${card("Siswa Aktif", visibleRows("students").filter(s => s.status === "aktif").length)}
       ${card("Guru Aktif", state.db.teachers.filter(t => t.active !== "false").length)}
-      ${card("Kelas", state.db.classes.length)}
+      ${card("Kelas", classesForSelectedYear().length)}
       ${card("Kehadiran", `${pct}%`)}
     </section>
     <section class="mobile-dashboard">
       <article class="total-card"><span>Rekap Seluruh Sekolah</span><strong>${pct}%</strong><small>${totals.total} sesi tercatat</small></article>
       <div class="mini-stats">
-        <article><strong class="ok-text">${totals.hadir}</strong><span>Hadir</span></article>
-        <article><strong>${totals.terlambat}</strong><span>Terlambat</span></article>
-        <article><strong>${totals.izin}</strong><span>Izin</span></article>
-        <article><strong class="danger-text">${totals.alfa}</strong><span>Alfa</span></article>
+        ${dashboardStatusCard("hadir", totals.hadir)}
+        ${dashboardStatusCard("terlambat", totals.terlambat)}
+        ${dashboardStatusCard("izin", totals.izin)}
+        ${dashboardStatusCard("alfa", totals.alfa)}
       </div>
     </section>
     <section class="panel">
-      <div class="panel-head"><div><h2>Jadwal Sekolah Hari Ini</h2><p class="muted">Kepala sekolah dapat memantau jadwal dan status sesi hari ini.</p></div></div>
+      <div class="panel-head"><div><h2>Jadwal Sekolah Hari Ini</h2><p class="muted">Kepala sekolah dapat memantau jadwal dan status sesi tahun ajaran ${escapeHtml(selectedAcademicYearName())}.</p></div><div class="actions">${academicYearSwitcher("headmaster-dashboard")}</div></div>
       <div class="table-wrap"><table><thead><tr><th>Kelas</th><th>Mapel</th><th>Guru</th><th>Jam</th><th>Status Sesi</th></tr></thead><tbody>
         ${todaySchedules.map(s => `<tr><td>${refName("classes")(s.class_id)}</td><td>${refName("subjects")(s.subject_id)}</td><td>${refName("teachers")(s.teacher_id)}</td><td>${escapeHtml(s.start_time)} - ${escapeHtml(s.end_time)}</td><td>${todaySessionForSchedule(s.id) ? badge(todaySessionForSchedule(s.id).status) : studentScheduleStatusText(s)}</td></tr>`).join("") || emptyRow(5)}
       </tbody></table></div>
     </section>`;
+  bindAcademicYearSwitcher(renderHeadmasterDashboard);
+  bindDashboardStatusCards(records, "Dashboard Kepala Sekolah");
 }
 
 function attendanceTotals(records) {
@@ -969,6 +1021,50 @@ function attendanceTotals(records) {
     a.total++;
     return a;
   }, { hadir: 0, terlambat: 0, izin: 0, sakit: 0, alfa: 0, total: 0 });
+}
+
+function dashboardStatusCard(status, count) {
+  const strongClass = status === "hadir" ? "ok-text" : status === "alfa" ? "danger-text" : "";
+  return `<button type="button" class="status-stat-card" data-dashboard-status="${status}">
+    <strong class="${strongClass}">${count}</strong>
+    <span>${statusLabels[status] || titleCase(status)}</span>
+  </button>`;
+}
+
+function bindDashboardStatusCards(records, scopeTitle) {
+  byId("view").querySelectorAll("[data-dashboard-status]").forEach(card => {
+    card.onclick = () => showDashboardStatusRecords(records, card.dataset.dashboardStatus, scopeTitle);
+  });
+}
+
+function showDashboardStatusRecords(records, status, scopeTitle) {
+  const rows = records
+    .filter(r => r.status === status)
+    .sort((a, b) => `${b.date || ""} ${b.scan_time || b.start_time || ""}`.localeCompare(`${a.date || ""} ${a.scan_time || a.start_time || ""}`))
+    .map((r, i) => {
+      const student = findById("students", r.student_id);
+      return `<tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(student?.name || "-")}</td>
+        <td>${escapeHtml(student?.nisn || "-")}</td>
+        <td>${refName("classes")(r.class_id)}</td>
+        <td>${refName("subjects")(r.subject_id)}</td>
+        <td>${refName("teachers")(r.teacher_id)}</td>
+        <td>${escapeHtml(r.date || "-")}</td>
+        <td>${escapeHtml(r.scan_time || r.start_time || "-")}</td>
+        <td>${badge(r.status)}</td>
+      </tr>`;
+    })
+    .join("");
+  modal(`${statusLabels[status] || titleCase(status)} - ${scopeTitle}`, `
+    <p class="muted">Data mengikuti tahun ajaran ${escapeHtml(selectedAcademicYearName())} dan cakupan akses role yang sedang login.</p>
+    <div class="table-wrap dashboard-status-table">
+      <table>
+        <thead><tr><th>No</th><th>Siswa</th><th>NISN</th><th>Kelas</th><th>Mapel</th><th>Guru</th><th>Tanggal</th><th>Jam</th><th>Status</th></tr></thead>
+        <tbody>${rows || emptyRow(9)}</tbody>
+      </table>
+    </div>
+  `);
 }
 
 function attentionTable(students, records) {
@@ -980,9 +1076,69 @@ function attentionTable(students, records) {
 }
 
 function card(label, value) { return `<article class="card"><span>${label}</span><strong>${value}</strong></article>`; }
-function activeAcademicYearName() {
+function resolveStoredAcademicYearId() {
+  const stored = localStorage.getItem(YEAR_KEY);
+  if (stored && state.db.academic_years.some(year => !year.deleted_at && year.id === stored)) return stored;
   const active = state.db.academic_years.find(year => !year.deleted_at && year.is_active === "true");
-  return displayName("academic_years", active) || "-";
+  return active?.id || state.db.academic_years.find(year => !year.deleted_at)?.id || "";
+}
+
+function selectedAcademicYearId() {
+  if (!state.selectedAcademicYearId || !state.db.academic_years.some(year => !year.deleted_at && year.id === state.selectedAcademicYearId)) {
+    state.selectedAcademicYearId = resolveStoredAcademicYearId();
+  }
+  return state.selectedAcademicYearId;
+}
+
+function selectedAcademicYearName() {
+  return displayName("academic_years", findById("academic_years", selectedAcademicYearId())) || "-";
+}
+
+function activeAcademicYearName() {
+  return selectedAcademicYearName();
+}
+
+function academicYearSwitcher(renderFnName = "") {
+  const selected = selectedAcademicYearId();
+  const options = state.db.academic_years
+    .filter(year => !year.deleted_at)
+    .sort((a, b) => String(b.start_date || b.name || "").localeCompare(String(a.start_date || a.name || "")))
+    .map(year => `<option value="${year.id}" ${year.id === selected ? "selected" : ""}>${escapeHtml(displayName("academic_years", year))}</option>`)
+    .join("");
+  return `<label class="year-switcher">Tahun Ajaran<select data-academic-year-switch="${escapeHtml(renderFnName)}">${options}</select></label>`;
+}
+
+function bindAcademicYearSwitcher(renderFn) {
+  byId("view").querySelectorAll("[data-academic-year-switch]").forEach(select => {
+    select.onchange = () => {
+      state.selectedAcademicYearId = select.value;
+      localStorage.setItem(YEAR_KEY, select.value);
+      state.filters.historyClass = "";
+      renderFn();
+    };
+  });
+}
+
+function filterBySelectedAcademicYear(table, rows) {
+  const yearId = selectedAcademicYearId();
+  if (!yearId) return rows;
+  if (["classes", "semesters", "schedules", "leave_requests", "attendance_records", "attendance_sessions"].includes(table)) {
+    return rows.filter(row => row.academic_year_id === yearId);
+  }
+  if (table === "students") return rows.filter(row => row.active_academic_year_id === yearId);
+  return rows;
+}
+
+function classesForSelectedYear() {
+  return state.db.classes.filter(cls => !cls.deleted_at && cls.academic_year_id === selectedAcademicYearId());
+}
+
+function recordsForSelectedYear(records = state.db.attendance_records) {
+  return records.filter(record => record.academic_year_id === selectedAcademicYearId());
+}
+
+function schedulesForSelectedYear(schedules = state.db.schedules) {
+  return schedules.filter(schedule => schedule.academic_year_id === selectedAcademicYearId());
 }
 
 function renderCrud(table) {
@@ -991,7 +1147,7 @@ function renderCrud(table) {
   if (table === "students" && canEditMaster()) return renderStudentClassOverview();
   if (table === "subjects" && canEditMaster()) return renderSubjectClassOverview();
   if (table === "leave_requests") return renderLeaveClassOverview();
-  const canWrite = table === "settings" ? currentUser().role === "super_admin" : canEditMaster() || canCreateLeaveRequest(table);
+  const canWrite = table === "settings" ? canEditMaster() : canEditMaster() || canCreateLeaveRequest(table);
   const data = visibleRows(table);
   const rows = data.map(row => `<tr>${schema.columns.map(([key, , fmt]) => `<td>${fmt ? fmt(row[key], row) : escapeHtml(row[key] ?? "")}</td>`).join("")}<td class="row-actions">${crudActions(table, row, canWrite)}</td></tr>`).join("");
   byId("view").innerHTML = `
@@ -999,6 +1155,7 @@ function renderCrud(table) {
       <div class="panel-head">
         <div><h2>${schema.title}</h2><p class="muted">${schema.subtitle}</p></div>
         <div class="actions crud-toolbar">
+          ${["semesters"].includes(table) ? academicYearSwitcher("crud") : ""}
           ${canWrite ? `<button class="primary" data-add>Tambah ${schema.title}</button>` : ""}
           ${crudActionSelect(table)}
         </div>
@@ -1007,6 +1164,7 @@ function renderCrud(table) {
       <div class="table-wrap"><table><thead><tr>${schema.columns.map(c => `<th>${c[1]}</th>`).join("")}<th>Aksi</th></tr></thead><tbody>${rows || emptyRow(schema.columns.length + 1)}</tbody></table></div>
     </section>`;
   bindCrud(table);
+  if (["semesters"].includes(table)) bindAcademicYearSwitcher(() => renderCrud(table));
 }
 
 function crudActionSelect(table) {
@@ -1030,7 +1188,7 @@ function renderStudentClassOverview() {
     homeroom: displayName("teachers", findById("teachers", cls.homeroom_teacher_id))
   }).toLowerCase().includes(q));
   classes = classes.sort((a, b) => `${a.level || ""}${a.name || ""}`.localeCompare(`${b.level || ""}${b.name || ""}`));
-  const activeStudents = state.db.students.filter(student => !student.deleted_at && student.status === "aktif");
+  const activeStudents = visibleRows("students").filter(student => student.status === "aktif");
   const cards = classes.map(cls => classManagementCard(cls)).join("");
   byId("view").innerHTML = `
     <section class="panel admin-workflow">
@@ -1041,6 +1199,7 @@ function renderStudentClassOverview() {
           <p class="muted">Alur kerja dibuat sederhana: pilih kelas, kelola siswa, lalu gunakan aksi kenaikan hanya saat pergantian periode.</p>
         </div>
         <div class="actions workflow-actions">
+          ${academicYearSwitcher("students")}
           <button class="primary" data-add-class>+ Kelas Baru</button>
           <button class="secondary" data-add-student>+ Siswa Baru</button>
           <button class="secondary" data-print-class>Cetak ID QR</button>
@@ -1059,6 +1218,7 @@ function renderStudentClassOverview() {
       </div>
     </section>`;
   bindStudentClassOverview();
+  bindAcademicYearSwitcher(renderStudentClassOverview);
 }
 
 function classManagementCard(cls) {
@@ -1125,8 +1285,8 @@ function renderSubjectClassOverview() {
     subjects: subjectsForClass(cls.id).map(subject => subject.name).join(" ")
   }).toLowerCase().includes(q));
   classes = classes.sort((a, b) => `${a.level || ""}${a.name || ""}`.localeCompare(`${b.level || ""}${b.name || ""}`));
-  const activeSubjects = state.db.subjects.filter(subject => !subject.deleted_at && subject.active !== "false");
-  const activeSchedules = state.db.schedules.filter(schedule => !schedule.deleted_at && schedule.active !== "false");
+  const activeSubjects = new Set(classes.flatMap(cls => subjectsForClass(cls.id).filter(subject => subject.active !== "false").map(subject => subject.id))).size;
+  const activeSchedules = schedulesForSelectedYear(state.db.schedules).filter(schedule => !schedule.deleted_at && schedule.active !== "false");
   const cards = classes.map(cls => subjectClassCard(cls)).join("");
   byId("view").innerHTML = `
     <section class="panel admin-workflow">
@@ -1137,13 +1297,14 @@ function renderSubjectClassOverview() {
           <p class="muted">Pilih kelas terlebih dahulu, lalu atur mapel, guru, hari, dan jam dalam satu tempat.</p>
         </div>
         <div class="actions workflow-actions">
+          ${academicYearSwitcher("subjects")}
           <button class="primary" data-add-schedule>+ Jadwal Mapel</button>
           <button class="secondary" data-add-subject>+ Master Mapel</button>
         </div>
       </div>
       <div class="workflow-stats">
         ${card("Kelas Aktif", classes.length)}
-        ${card("Mapel Aktif", activeSubjects.length)}
+        ${card("Mapel Aktif", activeSubjects)}
         ${card("Jadwal Aktif", activeSchedules.length)}
       </div>
       <div class="filters workflow-search">
@@ -1154,6 +1315,7 @@ function renderSubjectClassOverview() {
       </div>
     </section>`;
   bindSubjectClassOverview();
+  bindAcademicYearSwitcher(renderSubjectClassOverview);
 }
 
 function subjectClassCard(cls) {
@@ -1221,12 +1383,13 @@ function renderLeaveClassOverview() {
   byId("view").innerHTML = `<section class="panel admin-workflow">
     <div class="panel-head workflow-head">
       <div><span class="eyebrow">Izin Per Kelas</span><h2>Izin dan Sakit</h2><p class="muted">Kelola izin/sakit berdasarkan kelas agar persetujuan lebih mudah dipantau.</p></div>
-      <div class="actions"><button class="primary" data-add-leave-global>+ Izin/Sakit Baru</button></div>
+      <div class="actions">${academicYearSwitcher("leave")}<button class="primary" data-add-leave-global>+ Izin/Sakit Baru</button></div>
     </div>
     <div class="filters workflow-search"><input data-search-leave-class placeholder="Cari kelas, wali kelas, atau siswa..." value="${escapeHtml(q)}"></div>
     <div class="class-management-grid">${cards || `<div class="empty-state">Belum ada kelas untuk izin/sakit.</div>`}</div>
   </section>`;
   bindLeaveClassOverview();
+  bindAcademicYearSwitcher(renderLeaveClassOverview);
 }
 
 function leaveClassCard(cls) {
@@ -1312,6 +1475,7 @@ function bindCrud(table) {
 function visibleRows(table) {
   let rows = state.db[table].filter(r => !r.deleted_at);
   const user = currentUser();
+  rows = filterBySelectedAcademicYear(table, rows);
   if (table === "students" && user.role === "wali_kelas") {
     const classIds = new Set(state.db.classes.filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
     rows = rows.filter(r => classIds.has(r.active_class_id));
@@ -1372,7 +1536,8 @@ function openForm(table, row = null, defaults = {}, options = {}) {
 }
 
 function fieldHtml([key, label, type, required, options], row, context = {}) {
-  const value = escapeHtml(row?.[key] ?? defaultValue(type));
+  const rawValue = row?.[key] ?? ((key === "academic_year_id" || key === "active_academic_year_id") ? selectedAcademicYearId() : defaultValue(type));
+  const value = escapeHtml(rawValue);
   const req = required ? "required" : "";
   if (type === "textarea") return `<label class="wide">${label}<textarea name="${key}" ${req}>${value}</textarea></label>`;
   if (context.table === "schedules" && key === "day" && context.options?.fixedDay) {
@@ -1388,7 +1553,10 @@ function fieldHtml([key, label, type, required, options], row, context = {}) {
   }
   if (type.startsWith("ref:")) {
     const table = type.split(":")[1];
-    return `<label>${label}<select name="${key}" ${req}><option value="">Pilih...</option>${state.db[table].filter(r => !r.deleted_at).map(r => `<option value="${r.id}" ${row?.[key] === r.id ? "selected" : ""}>${escapeHtml(displayName(table, r))}</option>`).join("")}</select></label>`;
+    let rows = state.db[table].filter(r => !r.deleted_at);
+    if (["classes", "semesters"].includes(table)) rows = filterBySelectedAcademicYear(table, rows);
+    if (table === "students") rows = filterBySelectedAcademicYear("students", rows);
+    return `<label>${label}<select name="${key}" ${req}><option value="">Pilih...</option>${rows.map(r => `<option value="${r.id}" ${rawValue === r.id ? "selected" : ""}>${escapeHtml(displayName(table, r))}</option>`).join("")}</select></label>`;
   }
   if (type === "select") return `<label>${label}<select name="${key}" ${req}>${options.map(([v, l]) => `<option value="${v}" ${String(row?.[key] ?? "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>`;
   return `<label>${label}<input name="${key}" type="${type}" value="${value}" ${req}></label>`;
@@ -1420,11 +1588,19 @@ function normalizeRecord(table, data, row) {
 function validateRecord(table, data, row) {
   if (table === "students") {
     if (data.status === "aktif" && !findById("classes", data.active_class_id)) return toast("Kelas aktif wajib valid.", "error"), false;
+    const cls = findById("classes", data.active_class_id);
+    if (cls && data.active_academic_year_id !== cls.academic_year_id) return toast("Tahun ajaran siswa harus sama dengan kelas aktif.", "error"), false;
     const duplicate = state.db.students.find(s => !s.deleted_at && s.nis === data.nis && s.id !== row?.id);
     if (duplicate) return toast("NIS sudah digunakan.", "error"), false;
   }
+  if (table === "classes") {
+    const semester = findById("semesters", data.semester_id);
+    if (semester && semester.academic_year_id !== data.academic_year_id) return toast("Semester harus sesuai dengan tahun ajaran kelas.", "error"), false;
+  }
   if (table === "schedules") {
     if (!isActiveRef("teachers", data.teacher_id) || !isActiveRef("subjects", data.subject_id)) return toast("Guru dan mapel harus aktif.", "error"), false;
+    const cls = findById("classes", data.class_id);
+    if (cls && (data.academic_year_id !== cls.academic_year_id || data.semester_id !== cls.semester_id)) return toast("Tahun ajaran dan semester jadwal harus sama dengan kelas.", "error"), false;
     if (!data.start_time || !data.end_time) return toast("Pilih jam pelajaran terlebih dahulu.", "error"), false;
   }
   if (table === "teachers" && data.login_enabled === "true") {
@@ -1590,18 +1766,20 @@ function renderAttendance() {
   const user = currentUser();
   const teacher = state.db.teachers.find(t => t.id === user.teacher_id);
   const day = dayName(new Date());
-  let schedules = state.db.schedules.filter(s => s.active !== "false" && s.day === day);
+  let schedules = schedulesForSelectedYear().filter(s => s.active !== "false" && s.day === day);
   if (user.role === "guru" && teacher) schedules = schedules.filter(s => s.teacher_id === teacher.id);
   byId("view").innerHTML = `
     <section class="panel">
       <div class="panel-head">
-        <div><h2>Jadwal Hari Ini (${day})</h2><p class="muted">Pilih jadwal untuk membuka sesi. QR siswa hanya menjadi identitas.</p></div>
+        <div><h2>Jadwal Hari Ini (${day})</h2><p class="muted">Pilih jadwal tahun ajaran ${escapeHtml(selectedAcademicYearName())}. QR siswa hanya menjadi identitas.</p></div>
+        <div class="actions">${academicYearSwitcher("attendance")}</div>
       </div>
       <div class="table-wrap"><table><thead><tr><th>Kelas</th><th>Mapel</th><th>Guru</th><th>Jam</th><th>Status Sesi</th><th>Aksi</th></tr></thead><tbody>
         ${schedules.map(s => scheduleRow(s)).join("") || emptyRow(6)}
       </tbody></table></div>
     </section>
     <section id="session-panel"></section>`;
+  bindAcademicYearSwitcher(renderAttendance);
   byId("view").querySelectorAll("[data-open-session]").forEach(b => b.onclick = () => openSession(b.dataset.openSession));
   byId("view").querySelectorAll("[data-view-session]").forEach(b => b.onclick = () => renderSession(b.dataset.viewSession));
 }
@@ -1609,10 +1787,13 @@ function renderAttendance() {
 function scheduleRow(s) {
   const session = todaySessionForSchedule(s.id);
   const canOpen = canOpenScheduleNow(s);
-  const status = session ? badge(session.status) : scheduleOpenReason(s);
+  const timing = scheduleTimingState(s);
+  const status = session
+    ? timing === "past" && session.status === "open" ? `${badge("closed")} Jam lewat, perlu tutup sesi` : badge(session.status)
+    : scheduleOpenReason(s);
   const action = session
-    ? canOpen ? `<button class="secondary" data-view-session="${session.id}">Buka Panel</button>` : `<button class="ghost" disabled>Belum Waktunya</button>`
-    : canOpen ? `<button class="primary" data-open-session="${s.id}">Buka Sesi</button>` : `<button class="ghost" disabled>Belum Waktunya</button>`;
+    ? `<button class="secondary" data-view-session="${session.id}">Buka Panel</button>`
+    : canOpen ? `<button class="primary" data-open-session="${s.id}">Buka Sesi</button>` : `<button class="ghost" disabled>${timing === "past" ? "Ditutup" : "Belum Waktunya"}</button>`;
   return `<tr><td>${refName("classes")(s.class_id)}</td><td>${refName("subjects")(s.subject_id)}</td><td>${refName("teachers")(s.teacher_id)}</td><td>${s.start_time} - ${s.end_time}</td><td>${status}</td><td class="row-actions">${action}</td></tr>`;
 }
 
@@ -1624,9 +1805,12 @@ function renderHistory() {
   const scopedRecords = scopedAttendanceRecords();
   const selectedDate = state.filters.historyDate || "";
   const selectedSubject = state.filters.historySubject || "";
+  const selectedClass = state.filters.historyClass || "";
   const showSubjectFilter = currentUser().role === "siswa";
   let dateRecords = selectedDate ? scopedRecords.filter(r => r.date === selectedDate) : [];
   if (selectedSubject) dateRecords = dateRecords.filter(r => r.subject_id === selectedSubject);
+  const classCards = selectedDate ? historyClassCards(dateRecords, selectedClass) : "";
+  if (selectedClass) dateRecords = dateRecords.filter(r => r.class_id === selectedClass);
   const dateRecordIds = new Set(dateRecords.map(r => r.id));
   const dateStudentIds = new Set(dateRecords.map(r => r.student_id));
   const logs = selectedDate ? state.db.attendance_logs.filter(log => {
@@ -1645,10 +1829,12 @@ function renderHistory() {
     <section class="panel">
       <div class="panel-head"><div><h2>Pilih Tanggal History</h2><p class="muted">Riwayat scan dan audit log ditampilkan setelah tanggal dipilih.</p></div></div>
       <div class="filters">
+        ${academicYearSwitcher("history")}
         <input type="date" id="history-date" value="${escapeHtml(selectedDate)}">
         ${showSubjectFilter ? historySubjectSelect(selectedSubject) : ""}
       </div>
     </section>
+    ${selectedDate ? `<section class="panel"><div class="panel-head"><div><h2>History Per Kelas</h2><p class="muted">Pilih card kelas untuk melihat rincian kelas tersebut.</p></div></div><div class="history-class-grid">${classCards || `<div class="empty-state">Belum ada data kelas pada tanggal ini.</div>`}</div></section>` : ""}
     <section class="panel">
       <div class="panel-head"><div><h2>Riwayat Scan</h2><p class="muted">Aktivitas absensi terbaru dari QR, manual, izin otomatis, dan sistem alfa.</p></div></div>
       ${selectedDate ? `<div class="table-wrap"><table><thead><tr><th>Tanggal</th><th>Jam</th><th>Siswa</th><th>Kelas</th><th>Mapel</th><th>Status</th><th>Metode</th></tr></thead><tbody>${scans || emptyRow(7)}</tbody></table></div>` : `<p class="muted">Pilih tanggal terlebih dahulu.</p>`}
@@ -1659,30 +1845,56 @@ function renderHistory() {
     </section>`;
   byId("history-date").onchange = e => {
     state.filters.historyDate = e.target.value;
+    state.filters.historyClass = "";
     renderHistory();
   };
   byId("history-subject")?.addEventListener("change", e => {
     state.filters.historySubject = e.target.value;
+    state.filters.historyClass = "";
     renderHistory();
   });
+  bindAcademicYearSwitcher(renderHistory);
+  byId("view").querySelectorAll("[data-history-class]").forEach(button => {
+    button.onclick = () => {
+      state.filters.historyClass = state.filters.historyClass === button.dataset.historyClass ? "" : button.dataset.historyClass;
+      renderHistory();
+    };
+  });
+}
+
+function historyClassCards(records, selectedClassId) {
+  const grouped = new Map();
+  records.forEach(record => {
+    if (!grouped.has(record.class_id)) grouped.set(record.class_id, []);
+    grouped.get(record.class_id).push(record);
+  });
+  return [...grouped.entries()].map(([classId, rows]) => {
+    const totals = attendanceTotals(rows);
+    return `<button class="history-class-card ${selectedClassId === classId ? "active" : ""}" data-history-class="${classId}">
+      <span>${escapeHtml(displayName("classes", findById("classes", classId)) || "-")}</span>
+      <strong>${rows.length}</strong>
+      <small>Hadir ${totals.hadir + totals.terlambat} · Izin ${totals.izin + totals.sakit} · Alfa ${totals.alfa}</small>
+    </button>`;
+  }).join("");
 }
 
 function historySubjectSelect(selected) {
   const user = currentUser();
-  const subjectIds = new Set(state.db.attendance_records.filter(r => r.student_id === user.student_id).map(r => r.subject_id));
+  const subjectIds = new Set(recordsForSelectedYear().filter(r => r.student_id === user.student_id).map(r => r.subject_id));
   const options = [...subjectIds].map(id => `<option value="${id}" ${selected === id ? "selected" : ""}>${escapeHtml(displayName("subjects", findById("subjects", id)))}</option>`).join("");
   return `<select id="history-subject"><option value="">Semua Pelajaran</option>${options}</select>`;
 }
 
 function scopedAttendanceRecords() {
   const user = currentUser();
-  if (user.role === "siswa") return state.db.attendance_records.filter(r => r.student_id === user.student_id);
-  if (user.role === "guru") return state.db.attendance_records.filter(r => r.teacher_id === user.teacher_id);
+  const rows = recordsForSelectedYear();
+  if (user.role === "siswa") return rows.filter(r => r.student_id === user.student_id);
+  if (user.role === "guru") return rows.filter(r => r.teacher_id === user.teacher_id);
   if (user.role === "wali_kelas") {
     const classIds = new Set(state.db.classes.filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
-    return state.db.attendance_records.filter(r => classIds.has(r.class_id));
+    return rows.filter(r => classIds.has(r.class_id));
   }
-  return state.db.attendance_records.slice();
+  return rows.slice();
 }
 
 function openSession(scheduleId) {
@@ -1710,27 +1922,41 @@ function openSession(scheduleId) {
 function scheduleInActivePeriod(schedule) {
   const ay = findById("academic_years", schedule.academic_year_id);
   const sem = findById("semesters", schedule.semester_id);
-  return ay?.is_active === "true" && sem?.is_active === "true";
+  return schedule.academic_year_id === selectedAcademicYearId() && !!ay && !!sem;
 }
 
 function canOpenScheduleNow(schedule) {
   if (!schedule) return false;
   if (currentUser().role === "guru" && schedule.teacher_id !== currentUser().teacher_id) return false;
-  return schedule.day === dayName(new Date()) && isCurrentTimeWithinSchedule(schedule);
+  return scheduleTimingState(schedule) === "active";
 }
 
 function scheduleOpenReason(schedule) {
   if (!schedule) return "Jadwal sesi tidak ditemukan.";
   if (currentUser().role === "guru" && schedule.teacher_id !== currentUser().teacher_id) return "Jadwal ini bukan milik guru yang login.";
-  if (schedule.day !== dayName(new Date())) return `Sesi hanya bisa dibuka pada hari ${schedule.day}.`;
-  if (!isCurrentTimeWithinSchedule(schedule)) return `Sesi hanya bisa dibuka saat jam pelajaran ${schedule.start_time} - ${schedule.end_time}.`;
+  const timing = scheduleTimingState(schedule);
+  if (timing === "wrong_day") return `Sesi hanya bisa dibuka pada hari ${schedule.day}.`;
+  if (timing === "future") return `Belum waktunya. Sesi dibuka saat ${schedule.start_time} - ${schedule.end_time}.`;
+  if (timing === "past") return `Ditutup. Jam pelajaran ${schedule.start_time} - ${schedule.end_time} sudah lewat.`;
   return "Sesi siap dibuka.";
 }
 
+function scheduleTimingState(schedule) {
+  if (!schedule) return "missing";
+  if (schedule.day !== dayName(new Date())) return "wrong_day";
+  const current = currentMinutes();
+  if (current < timeToMinutes(schedule.start_time)) return "future";
+  if (current > timeToMinutes(schedule.end_time)) return "past";
+  return "active";
+}
+
 function isCurrentTimeWithinSchedule(schedule) {
+  return scheduleTimingState(schedule) === "active";
+}
+
+function currentMinutes() {
   const nowDate = new Date();
-  const current = nowDate.getHours() * 60 + nowDate.getMinutes();
-  return current >= timeToMinutes(schedule.start_time) && current <= timeToMinutes(schedule.end_time);
+  return nowDate.getHours() * 60 + nowDate.getMinutes();
 }
 
 function timeToMinutes(value) {
@@ -1742,6 +1968,7 @@ function renderSession(sessionId) {
   const session = findById("attendance_sessions", sessionId);
   const schedule = findById("schedules", session.schedule_id);
   const canScanNow = session.status === "open" && canOpenScheduleNow(schedule);
+  const sessionNote = session.status === "open" && scheduleTimingState(schedule) === "past" ? "Jam pelajaran sudah lewat. Tutup sesi untuk memproses alfa." : statusText(session.status);
   const rows = studentsInClass(session.class_id).map(st => {
     const rec = state.db.attendance_records.find(r => r.session_id === session.id && r.student_id === st.id);
     return `<div class="status-row"><span>${escapeHtml(st.name)}<br><small class="muted">${escapeHtml(st.nis || "")}</small></span>${badge(rec?.status || "belum")}</div>`;
@@ -1749,7 +1976,7 @@ function renderSession(sessionId) {
   byId("session-panel").innerHTML = `
     <section class="panel">
       <div class="panel-head">
-        <div><h2>${refName("classes")(session.class_id)} - ${refName("subjects")(session.subject_id)}</h2><p class="muted">${session.date}, ${session.start_time} - ${session.end_time}. Status: ${statusText(session.status)}</p></div>
+        <div><h2>${refName("classes")(session.class_id)} - ${refName("subjects")(session.subject_id)}</h2><p class="muted">${session.date}, ${session.start_time} - ${session.end_time}. Status: ${escapeHtml(sessionNote)}</p></div>
         <div class="actions">${session.status === "open" ? `<button class="danger" data-close-session>Tutup Sesi</button>` : ""}<button class="secondary" data-export-session>Export CSV</button><button class="secondary" data-export-session-xls>Export Excel</button></div>
       </div>
       <div class="scanner">
@@ -1799,7 +2026,7 @@ function scanToken(sessionId, token) {
   const oldStatus = existing?.status;
   const rec = upsertRecord(session, student, status, "qr", "Scan QR");
   if (oldStatus && oldStatus !== status) logChange(rec, oldStatus, status, "Scan QR mengubah status pada sesi terbuka.");
-  saveDb(); successBeep(); toast(`Berhasil: ${student.name} ${statusLabels[status]}.`, "ok"); renderSession(session.id);
+  saveDb(); successBeep(); renderSession(session.id); scanSuccessNotice(student, status, session);
 }
 
 function confirmLeaveOverride(session, student, existing, leave) {
@@ -1929,9 +2156,8 @@ function renderReports() {
   const hideClassFilter = user.role === "wali_kelas";
   byId("view").innerHTML = `
     <section class="panel">
-      <div class="panel-head"><div><h2>Filter Laporan</h2><p class="muted">Persentase = (Hadir + Terlambat) / Total sesi wajib x 100.</p></div><div class="actions"><button class="secondary" data-csv>Export CSV</button><button class="secondary" data-excel>Export Excel</button><button class="secondary" data-pdf>Cetak/PDF</button></div></div>
+      <div class="panel-head"><div><h2>Filter Laporan</h2><p class="muted">Persentase = (Hadir + Terlambat) / Total sesi wajib x 100.</p></div><div class="actions">${academicYearSwitcher("reports")}<button class="secondary" data-csv>Export CSV</button><button class="secondary" data-excel>Export Excel</button><button class="secondary" data-pdf>Cetak/PDF</button></div></div>
       <div class="filters">
-        ${filterSelect("academic_year_id", "Tahun Ajaran", "academic_years")}
         ${filterSelect("semester_id", "Semester", "semesters")}
         ${hideClassFilter ? "" : filterSelect("class_id", "Kelas", "classes")}
         ${hideTeacherStudentFilters ? "" : filterSelect("student_id", "Siswa", "students")}
@@ -1945,6 +2171,7 @@ function renderReports() {
   byId("view").querySelector("[data-csv]").onclick = () => exportCsv("laporan_absensi", filteredRecords(), "attendance_report");
   byId("view").querySelector("[data-excel]").onclick = () => exportExcel("laporan_absensi", filteredRecords(), "attendance_report");
   byId("view").querySelector("[data-pdf]").onclick = () => window.print();
+  bindAcademicYearSwitcher(renderReports);
   renderReportOutput();
 }
 
@@ -2095,14 +2322,14 @@ function openImport(table) {
 }
 
 function openQrPrint() {
-  const options = state.db.classes.map(c => `<option value="${c.id}">${escapeHtml(displayName("classes", c))}</option>`).join("");
+  const options = classOptionList();
   modal("Cetak QR Massal", `<form id="qr-class-form" class="form-grid"><label>Kelas<select name="class_id" required>${options}</select></label><div class="wide actions"><button class="primary">Tampilkan QR</button><button class="ghost" type="button" data-close>Batal</button></div></form>`);
   byId("qr-class-form").onsubmit = e => { e.preventDefault(); const fd = formData(e.target); closeModal(); showQrCards(studentsInClass(fd.class_id)); };
 }
 
 function classOptionList(selectedId = "") {
   return state.db.classes
-    .filter(cls => !cls.deleted_at)
+    .filter(cls => !cls.deleted_at && cls.academic_year_id === selectedAcademicYearId())
     .map(cls => `<option value="${cls.id}" ${cls.id === selectedId ? "selected" : ""}>${escapeHtml(displayName("classes", cls))}</option>`)
     .join("");
 }
@@ -2918,7 +3145,11 @@ function parseCsv(text) {
 }
 
 function filterSelect(name, label, table) {
-  return `<select name="${name}"><option value="">${label}</option>${state.db[table].filter(r => !r.deleted_at).map(r => `<option value="${r.id}">${escapeHtml(displayName(table, r))}</option>`).join("")}</select>`;
+  const selected = name === "academic_year_id" ? selectedAcademicYearId() : "";
+  let rows = state.db[table].filter(r => !r.deleted_at);
+  if (table === "classes" || table === "semesters") rows = filterBySelectedAcademicYear(table, rows);
+  if (table === "students") rows = filterBySelectedAcademicYear("students", rows);
+  return `<select name="${name}"><option value="">${label}</option>${rows.map(r => `<option value="${r.id}" ${selected === r.id ? "selected" : ""}>${escapeHtml(displayName(table, r))}</option>`).join("")}</select>`;
 }
 
 function studentsInClass(classId) {
@@ -2928,7 +3159,7 @@ function studentsInClass(classId) {
 }
 function accessibleLeaveClasses() {
   const user = currentUser();
-  let classes = state.db.classes.filter(cls => !cls.deleted_at);
+  let classes = classesForSelectedYear();
   if (user.role === "wali_kelas") classes = classes.filter(cls => cls.homeroom_teacher_id === user.teacher_id);
   if (user.role === "guru") {
     const ids = new Set(state.db.schedules.filter(schedule => !schedule.deleted_at && schedule.teacher_id === user.teacher_id).map(schedule => schedule.class_id));
@@ -3009,6 +3240,22 @@ function toast(msg, type = "ok") {
   const t = byId("toast");
   t.textContent = msg; t.className = `toast ${type} show`;
   setTimeout(() => t.classList.remove("show"), 2800);
+}
+function scanSuccessNotice(student, status, session) {
+  document.querySelector(".scan-success-toast")?.remove();
+  const el = document.createElement("div");
+  el.className = "scan-success-toast show";
+  el.innerHTML = `
+    <div class="scan-success-icon">OK</div>
+    <div>
+      <span>Scan QR Berhasil</span>
+      <strong>${escapeHtml(student.name)}</strong>
+      <small>${statusLabels[status]} - ${escapeHtml(displayName("classes", findById("classes", session.class_id)))} - ${new Date().toTimeString().slice(0, 8)}</small>
+    </div>
+  `;
+  document.body.appendChild(el);
+  setTimeout(() => el.classList.remove("show"), 3200);
+  setTimeout(() => el.remove(), 3600);
 }
 function successBeep() { beep(660, 80); }
 function failBeep() { beep(180, 150); }

@@ -1,12 +1,15 @@
 <!doctype html>
 <html lang="id">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Al Hikmah Attendance</title>
-    <link rel="stylesheet" href="styles.css?v=20260604-yellow-cards">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
-    <script src="app.js?v=20260604-yellow-cards" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20260605-student-message" />
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"
+      defer
+    ></script>
+    <script src="app.js?v=20260605-student-message" defer></script>
   </head>
   <body>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -22,14 +25,18 @@
         </div>
         <form id="setup-form" class="hidden">
           <h2>Setup Administrator</h2>
-          <label>Nama Sekolah <input name="schoolName" required></label>
-          <label>Nama Administrator <input name="name" required></label>
-          <label>Email <input name="email" type="email" required></label>
-          <label>Password <input name="password" type="password" minlength="6" required></label>
+          <label>Nama Sekolah <input name="schoolName" required /></label>
+          <label>Nama Administrator <input name="name" required /></label>
+          <label>Email <input name="email" type="email" required /></label>
+          <label
+            >Password
+            <input name="password" type="password" minlength="6" required
+          /></label>
           <button class="primary" type="submit">Buat Administrator</button>
         </form>
         <form id="login-form" class="hidden">
-          <label class="field-label">Pilih Peran
+          <label class="field-label"
+            >Pilih Peran
             <select name="role" required>
               <option value="super_admin">Administrator</option>
               <option value="guru">Guru</option>
@@ -38,10 +45,31 @@
               <option value="siswa">Siswa</option>
             </select>
           </label>
-          <label class="field-label"><span id="login-id-label">Email / NIP / NISN</span><span class="input-icon user-icon"><input id="login-identifier" name="email" type="text" placeholder="Masukkan Email, NIP, atau NISN" required></span></label>
-          <label class="field-label" id="login-password-field">Kata Sandi <a href="#" class="forgot-link">Lupa Kata Sandi?</a><span class="input-icon lock-icon"><input id="login-password" name="password" type="password" placeholder="Masukkan kata sandi"></span></label>
-          <button class="primary login-button" type="submit">Masuk <span>↪</span></button>
-          <div class="login-help">Kesulitan masuk? Hubungi <strong>Pusat Bantuan</strong></div>
+          <label class="field-label"
+            ><span id="login-id-label">Email / NIP / NISN</span
+            ><span class="input-icon user-icon"
+              ><input
+                id="login-identifier"
+                name="email"
+                type="text"
+                placeholder="Masukkan Email, NIP, atau NISN"
+                required /></span
+          ></label>
+          <label class="field-label" id="login-password-field"
+            >Kata Sandi <a href="#" class="forgot-link">Lupa Kata Sandi?</a
+            ><span class="input-icon lock-icon"
+              ><input
+                id="login-password"
+                name="password"
+                type="password"
+                placeholder="Masukkan kata sandi" /></span
+          ></label>
+          <button class="primary login-button" type="submit">
+            Masuk <span>↪</span>
+          </button>
+          <div class="login-help">
+            Kesulitan masuk? Hubungi <strong>Pusat Bantuan</strong>
+          </div>
         </form>
         <footer class="login-footer">
           <span>v2.4.0</span>
@@ -62,7 +90,9 @@
       </aside>
       <section class="workspace">
         <header class="topbar">
-          <button id="menu-toggle" class="icon-btn" aria-label="Menu">☰</button>
+          <button id="menu-toggle" class="icon-btn" aria-label="Menu">
+            ☰
+          </button>
           <div>
             <h1 id="page-title">Dashboard</h1>
             <p id="page-subtitle" class="muted"></p>
@@ -87,7 +117,12 @@
           <div class="actions"></div>
         </div>
         <div class="filters"></div>
-        <div class="table-wrap"><table><thead></thead><tbody></tbody></table></div>
+        <div class="table-wrap">
+          <table>
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
         <div class="pager"></div>
       </section>
     </template>

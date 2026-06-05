@@ -133,7 +133,7 @@ const schemas = {
       ["gender", "Jenis Kelamin", "select", true, [["L", "Laki-laki"], ["P", "Perempuan"]]],
       ["birth_place", "Tempat Lahir", "text", false], ["birth_date", "Tanggal Lahir", "date", false],
       ["address", "Alamat", "textarea", false], ["father_name", "Nama Ayah", "text", false], ["mother_name", "Nama Ibu", "text", false],
-      ["parent_phone", "Nomor HP Orang Tua", "text", false], ["login_enabled", "Akun Login", "select", true, [["true", "Aktif"], ["false", "Nonaktif"]]], ["photo", "Foto Siswa (URL)", "text", false],
+      ["parent_phone", "Nomor HP Orang Tua", "text", false], ["login_enabled", "Akun Login", "select", true, [["true", "Aktif"], ["false", "Nonaktif"]]], ["photo", "Foto Siswa", "image", false],
       ["active_class_id", "Kelas Aktif", "ref:classes", true], ["active_academic_year_id", "Tahun Ajaran Aktif", "ref:academic_years", true],
       ["status", "Status Siswa", "select", true, [["aktif", "Aktif"], ["pindah", "Pindah"], ["lulus", "Lulus"], ["keluar", "Keluar"]]]
     ],
@@ -163,6 +163,7 @@ const schemas = {
     subtitle: "Atur toleransi keterlambatan dan identitas cetak laporan.",
     fields: [
       ["school_name", "Nama Sekolah", "text", true],
+      ["school_logo", "Logo Sekolah", "image", false],
       ["school_website", "Website Sekolah", "text", false],
       ["school_phone", "Nomor Telepon Sekolah", "text", false],
       ["headmaster_name", "Nama Kepala Sekolah", "text", false],
@@ -584,13 +585,16 @@ function teacherHasTeachingSchedule(teacherId) {
 }
 
 function bindShell() {
-  byId("logout").onclick = () => {
-    localStorage.removeItem(SESSION_KEY);
-    stopCamera();
-    state.session = null;
-    showLogin();
-  };
+  byId("logout").onclick = logoutApp;
   byId("menu-toggle").onclick = () => document.querySelector(".sidebar").classList.toggle("open");
+}
+
+function logoutApp() {
+  localStorage.removeItem(SESSION_KEY);
+  stopCamera();
+  closeModal();
+  state.session = null;
+  showLogin();
 }
 
 function showSetup() { byId("auth").classList.remove("hidden"); byId("app").classList.add("hidden"); byId("setup-form").classList.remove("hidden"); byId("login-form").classList.add("hidden"); }
@@ -602,15 +606,83 @@ function showApp() {
   const user = currentUser();
   byId("active-user").textContent = user.name;
   byId("active-role").textContent = roles[user.role];
+  updateMobileSchoolBar();
   renderMenu();
   navigate(state.page);
 }
 
 function applySchoolBrand() {
-  const name = state.db.settings?.[0]?.school_name || "EduAttend Pro";
+  const setting = state.db.settings?.[0] || {};
+  const name = setting.school_name || "EduAttend Pro";
   document.querySelectorAll(".login-brand strong, .brand strong").forEach(el => {
     el.textContent = name;
   });
+  document.querySelectorAll(".logo-mark").forEach(el => {
+    el.innerHTML = schoolLogoHtml();
+  });
+  document.querySelectorAll(".brand").forEach(el => {
+    let logo = el.querySelector(".brand-logo-image");
+    if (!logo) {
+      logo = document.createElement("span");
+      logo.className = "brand-logo-image";
+      el.prepend(logo);
+    }
+    logo.innerHTML = schoolLogoHtml();
+  });
+  updateMobileSchoolBar();
+}
+
+function schoolLogoHtml(className = "school-logo-image") {
+  const setting = state.db.settings?.[0] || {};
+  const name = setting.school_name || "EduAttend Pro";
+  if (setting.school_logo) return `<img class="${escapeHtml(className)}" src="${escapeHtml(setting.school_logo)}" alt="${escapeHtml(name)}">`;
+  return escapeHtml(initials(name));
+}
+
+function updateMobileSchoolBar() {
+  const bar = byId("mobile-school-bar");
+  if (!bar || !state.db || !state.session) return;
+  const user = currentUser();
+  const setting = state.db.settings?.[0] || {};
+  const schoolName = setting.school_name || "EduAttend Pro";
+  const note = mobileScheduleNotification(user);
+  bar.innerHTML = `
+    <div class="mobile-school-id">
+      <span>${schoolLogoHtml()}</span>
+      <strong>${escapeHtml(schoolName)}</strong>
+    </div>
+    ${note ? `<button type="button" class="mobile-notification" title="${escapeHtml(note.detail)}"><b>!</b><span>${escapeHtml(note.text)}</span></button>` : ""}
+  `;
+}
+
+function mobileScheduleNotification(user) {
+  if (!["siswa", "guru", "wali_kelas"].includes(user?.role)) return null;
+  const schedules = notificationSchedulesForUser(user);
+  if (!schedules.length) return { text: "Tidak ada jadwal hari ini", detail: "Tidak ada pelajaran yang terdaftar untuk hari ini." };
+  const nowMin = currentMinutes();
+  const active = schedules.find(s => nowMin >= timeToMinutes(s.start_time) && nowMin <= timeToMinutes(s.end_time));
+  const next = active || schedules.find(s => timeToMinutes(s.start_time) >= nowMin) || schedules[schedules.length - 1];
+  const subject = displayName("subjects", findById("subjects", next.subject_id));
+  const cls = displayName("classes", findById("classes", next.class_id));
+  if (active) return { text: `${subject} sedang dimulai`, detail: `${cls} - ${next.start_time} sampai ${next.end_time}` };
+  if (timeToMinutes(next.start_time) >= nowMin) return { text: `${subject} mulai ${next.start_time}`, detail: `${cls} - ${next.start_time} sampai ${next.end_time}` };
+  return { text: "Jadwal hari ini selesai", detail: "Semua jadwal hari ini sudah lewat." };
+}
+
+function notificationSchedulesForUser(user) {
+  const day = dayName(new Date());
+  let schedules = schedulesForSelectedYear().filter(s => !s.deleted_at && s.active !== "false" && s.day === day);
+  if (user.role === "siswa") {
+    const student = findById("students", user.student_id);
+    const cls = student ? studentClassForSelectedYear(student) || findById("classes", student.active_class_id) : null;
+    schedules = schedules.filter(s => s.class_id === cls?.id);
+  } else if (user.role === "guru") {
+    schedules = schedules.filter(s => s.teacher_id === user.teacher_id);
+  } else if (user.role === "wali_kelas") {
+    const classIds = new Set(classesForSelectedYear().filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
+    schedules = schedules.filter(s => classIds.has(s.class_id));
+  }
+  return schedules.sort((a, b) => timeToMinutes(a.start_time) - timeToMinutes(b.start_time));
 }
 
 function currentUser() {
@@ -684,7 +756,7 @@ function menuItemsForCurrentUser() {
     ["reports", "Laporan", canReport()],
     ["users", "Pengguna & Role", user.role === "super_admin"],
     ["settings", "Pengaturan", canEditMaster()],
-    ["profile", "Profil Saya", user.role !== "siswa"]
+    ["profile", "Profil Saya", user.role !== "super_admin"]
   ].filter(i => i[2]);
 }
 
@@ -699,6 +771,7 @@ function navigate(page) {
   const schema = schemas[page];
   byId("page-title").textContent = titles[page] || schema?.title || "Aplikasi";
   byId("page-subtitle").textContent = page === "attendance" ? "Buka jadwal aktif terlebih dahulu sebelum scan QR siswa." : "";
+  updateMobileSchoolBar();
   renderQuickTools();
   if (page === "dashboard") return renderDashboard();
   if (page === "attendance") return renderAttendance();
@@ -843,8 +916,10 @@ function renderStudentDashboard() {
       <div class="table-wrap"><table><thead><tr><th>Mapel</th><th>Guru</th><th>Jam</th><th>Status</th></tr></thead><tbody>
         ${todayRecords.map(r => `<tr><td>${refName("subjects")(r.subject_id)}</td><td>${refName("teachers")(r.teacher_id)}</td><td>${escapeHtml(r.start_time)} - ${escapeHtml(r.end_time)}</td><td>${badge(r.status)}</td></tr>`).join("") || emptyRow(4)}
       </tbody></table></div>
-    </section>`;
+    </section>
+    ${profileSummaryCard()}`;
   bindAcademicYearSwitcher(renderStudentDashboard);
+  bindProfileSummaryActions();
 }
 
 function studentClassForSelectedYear(student) {
@@ -919,9 +994,11 @@ function renderTeacherDashboard() {
           return `<tr><td>${refName("classes")(s.class_id)}</td><td>${refName("subjects")(s.subject_id)}</td><td>${escapeHtml(s.start_time)} - ${escapeHtml(s.end_time)}</td><td>${ses ? badge(ses.status) : scheduleOpenReason(s)}</td></tr>`;
         }).join("") || emptyRow(4)}
       </tbody></table></div>
-    </section>`;
+    </section>
+    ${profileSummaryCard()}`;
   bindAcademicYearSwitcher(renderTeacherDashboard);
   bindDashboardStatusCards(records, "Dashboard Guru");
+  bindProfileSummaryActions();
 }
 
 function schedulesTodayForClass(classId) {
@@ -979,9 +1056,11 @@ function renderHomeroomDashboard() {
         ${todaySchedules.map(s => `<tr><td>${refName("classes")(s.class_id)}</td><td>${refName("subjects")(s.subject_id)}</td><td>${refName("teachers")(s.teacher_id)}</td><td>${escapeHtml(s.start_time)} - ${escapeHtml(s.end_time)}</td><td>${todaySessionForSchedule(s.id) ? badge(todaySessionForSchedule(s.id).status) : studentScheduleStatusText(s)}</td></tr>`).join("") || emptyRow(5)}
       </tbody></table></div>
     </section>
-    <section class="panel"><div class="panel-head"><div><h2>Siswa Perlu Perhatian</h2><p class="muted">Diurutkan dari jumlah alfa dan terlambat tertinggi.</p></div></div>${attentionTable(students, records)}</section>`;
+    <section class="panel"><div class="panel-head"><div><h2>Siswa Perlu Perhatian</h2><p class="muted">Diurutkan dari jumlah alfa dan terlambat tertinggi.</p></div></div>${attentionTable(students, records)}</section>
+    ${profileSummaryCard()}`;
   bindAcademicYearSwitcher(renderHomeroomDashboard);
   bindDashboardStatusCards(records, "Dashboard Wali Kelas");
+  bindProfileSummaryActions();
 }
 
 function renderHeadmasterDashboard() {
@@ -1010,9 +1089,11 @@ function renderHeadmasterDashboard() {
       <div class="table-wrap"><table><thead><tr><th>Kelas</th><th>Mapel</th><th>Guru</th><th>Jam</th><th>Status Sesi</th></tr></thead><tbody>
         ${todaySchedules.map(s => `<tr><td>${refName("classes")(s.class_id)}</td><td>${refName("subjects")(s.subject_id)}</td><td>${refName("teachers")(s.teacher_id)}</td><td>${escapeHtml(s.start_time)} - ${escapeHtml(s.end_time)}</td><td>${todaySessionForSchedule(s.id) ? badge(todaySessionForSchedule(s.id).status) : studentScheduleStatusText(s)}</td></tr>`).join("") || emptyRow(5)}
       </tbody></table></div>
-    </section>`;
+    </section>
+    ${profileSummaryCard()}`;
   bindAcademicYearSwitcher(renderHeadmasterDashboard);
   bindDashboardStatusCards(records, "Dashboard Kepala Sekolah");
+  bindProfileSummaryActions();
 }
 
 function attendanceTotals(records) {
@@ -1067,6 +1148,58 @@ function showDashboardStatusRecords(records, status, scopeTitle) {
   `);
 }
 
+function profileSummaryCard() {
+  const user = currentUser();
+  if (!user || user.role === "super_admin") return "";
+  const details = profileDetails(user);
+  return `<section class="profile-summary-card">
+    ${profileAvatarHtml(user)}
+    <div class="profile-summary-body">
+      <span>${escapeHtml(roles[user.role] || user.role)}</span>
+      <h2>${escapeHtml(user.name || "-")}</h2>
+      <div class="profile-biodata-grid">
+        ${details.map(([label, value]) => `<p><small>${escapeHtml(label)}</small><strong>${escapeHtml(value || "-")}</strong></p>`).join("")}
+      </div>
+    </div>
+    <div class="profile-summary-actions">
+      <button class="secondary" data-go-profile>Profil</button>
+      <button class="ghost" data-inline-logout>Keluar</button>
+    </div>
+  </section>`;
+}
+
+function profileAvatarHtml(user) {
+  const student = user.role === "siswa" ? findById("students", user.student_id) : null;
+  const photo = student?.photo;
+  return `<div class="profile-avatar">${photo ? `<img src="${escapeHtml(photo)}" alt="${escapeHtml(student.name || user.name || "Siswa")}">` : escapeHtml(initials(user.name || roles[user.role] || "U"))}</div>`;
+}
+
+function bindProfileSummaryActions(root = byId("view")) {
+  root.querySelectorAll("[data-go-profile]").forEach(btn => btn.onclick = () => navigate("profile"));
+  root.querySelectorAll("[data-inline-logout]").forEach(btn => btn.onclick = logoutApp);
+}
+
+function profileDetails(user) {
+  if (user.role === "siswa") {
+    const student = findById("students", user.student_id) || {};
+    const cls = studentClassForSelectedYear(student) || findById("classes", student.active_class_id);
+    return [
+      ["NISN", student.nisn],
+      ["NIS", student.nis],
+      ["Kelas", displayName("classes", cls)],
+      ["Orang Tua", student.parent_phone]
+    ];
+  }
+  const teacher = findById("teachers", user.teacher_id) || {};
+  const homeroomClasses = state.db.classes.filter(c => c.homeroom_teacher_id === teacher.id && c.academic_year_id === selectedAcademicYearId());
+  return [
+    ["NIP", teacher.nip || user.nip],
+    ["Telepon", teacher.phone],
+    ["Wali Kelas", homeroomClasses.map(c => c.name).join(", ") || "Tidak"],
+    ["Status", boolText(user.active)]
+  ];
+}
+
 function attentionTable(students, records) {
   const rows = students.map(st => {
     const t = attendanceTotals(records.filter(r => r.student_id === st.id));
@@ -1115,6 +1248,7 @@ function bindAcademicYearSwitcher(renderFn) {
       localStorage.setItem(YEAR_KEY, select.value);
       state.filters.historyClass = "";
       renderFn();
+      updateMobileSchoolBar();
     };
   });
 }
@@ -1503,7 +1637,7 @@ function openForm(table, row = null, defaults = {}, options = {}) {
   byId("modal-form").onsubmit = async e => {
     e.preventDefault();
     const wasNew = !row;
-    const data = normalizeRecord(table, formData(e.target), row);
+    const data = normalizeRecord(table, await formDataWithImages(e.target), row);
     if (!validateRecord(table, data, row)) return;
     if (row) Object.assign(row, data, { updated_at: now(), updated_by: currentUser().id });
     else state.db[table].push({ id: uid(table.slice(0, 3)), ...data, created_at: now(), updated_at: now(), created_by: currentUser().id });
@@ -1515,7 +1649,10 @@ function openForm(table, row = null, defaults = {}, options = {}) {
     if (table === "leave_requests" && data.status === "approved") applyApprovedLeave(row || state.db.leave_requests.at(-1));
     const renderTarget = table === "schedules" && currentUser().role === "super_admin" ? "subjects" : table;
     saveDb(); closeModal(); renderCrud(renderTarget);
-    if (table === "settings") applySchoolBrand();
+    if (table === "settings") {
+      applySchoolBrand();
+      renderCrud("settings");
+    }
     if (options.returnClassId && table === "students") {
       openClassStudents(options.returnClassId);
     }
@@ -1540,6 +1677,15 @@ function fieldHtml([key, label, type, required, options], row, context = {}) {
   const value = escapeHtml(rawValue);
   const req = required ? "required" : "";
   if (type === "textarea") return `<label class="wide">${label}<textarea name="${key}" ${req}>${value}</textarea></label>`;
+  if (type === "image") {
+    const hasImage = rawValue && String(rawValue).startsWith("data:image/");
+    return `<label class="wide image-upload-field">${label}
+      ${hasImage ? `<img src="${escapeHtml(rawValue)}" alt="${escapeHtml(label)}">` : `<span class="image-upload-empty">Belum ada gambar</span>`}
+      <input type="hidden" name="${key}" value="${value}">
+      <input name="${key}__file" type="file" accept="image/*" ${req}>
+      <small>Upload JPG/PNG. Gambar akan dikompres agar aman disimpan.</small>
+    </label>`;
+  }
   if (context.table === "schedules" && key === "day" && context.options?.fixedDay) {
     return `<label>Hari<input value="${escapeHtml(context.options.fixedDay)}" disabled><input type="hidden" name="day" value="${escapeHtml(context.options.fixedDay)}"></label>`;
   }
@@ -1602,6 +1748,8 @@ function validateRecord(table, data, row) {
     const cls = findById("classes", data.class_id);
     if (cls && (data.academic_year_id !== cls.academic_year_id || data.semester_id !== cls.semester_id)) return toast("Tahun ajaran dan semester jadwal harus sama dengan kelas.", "error"), false;
     if (!data.start_time || !data.end_time) return toast("Pilih jam pelajaran terlebih dahulu.", "error"), false;
+    const conflict = scheduleConflict(data, row);
+    if (conflict) return toast(conflict, "error"), false;
   }
   if (table === "teachers" && data.login_enabled === "true") {
     const duplicateNip = state.db.teachers.find(t => !t.deleted_at && t.nip && t.nip === data.nip && t.id !== row?.id);
@@ -1786,6 +1934,7 @@ function renderAttendance() {
 
 function scheduleRow(s) {
   const session = todaySessionForSchedule(s.id);
+  if (session) autoCloseSessionIfPast(session, { silent: true });
   const canOpen = canOpenScheduleNow(s);
   const timing = scheduleTimingState(s);
   const status = session
@@ -1967,48 +2116,37 @@ function timeToMinutes(value) {
 function renderSession(sessionId) {
   const session = findById("attendance_sessions", sessionId);
   const schedule = findById("schedules", session.schedule_id);
+  autoCloseSessionIfPast(session, { silent: true });
   const canScanNow = session.status === "open" && canOpenScheduleNow(schedule);
   const sessionNote = session.status === "open" && scheduleTimingState(schedule) === "past" ? "Jam pelajaran sudah lewat. Tutup sesi untuk memproses alfa." : statusText(session.status);
-  const rows = studentsInClass(session.class_id).map(st => {
-    const rec = state.db.attendance_records.find(r => r.session_id === session.id && r.student_id === st.id);
-    return `<div class="status-row"><span>${escapeHtml(st.name)}<br><small class="muted">${escapeHtml(st.nis || "")}</small></span>${badge(rec?.status || "belum")}</div>`;
-  }).join("");
-  byId("session-panel").innerHTML = `
-    <section class="panel">
-      <div class="panel-head">
-        <div><h2>${refName("classes")(session.class_id)} - ${refName("subjects")(session.subject_id)}</h2><p class="muted">${session.date}, ${session.start_time} - ${session.end_time}. Status: ${escapeHtml(sessionNote)}</p></div>
-        <div class="actions">${session.status === "open" ? `<button class="danger" data-close-session>Tutup Sesi</button>` : ""}<button class="secondary" data-export-session>Export CSV</button><button class="secondary" data-export-session-xls>Export Excel</button></div>
+  modal(`${displayName("classes", findById("classes", session.class_id))} - ${displayName("subjects", findById("subjects", session.subject_id))}`, `
+    <section class="scan-popup-panel">
+      <div class="scan-popup-head">
+        <p class="muted">${session.date}, ${session.start_time} - ${session.end_time}. Status: ${escapeHtml(sessionNote)}</p>
       </div>
-      <div class="scanner">
+      <div class="scanner scanner-popup">
         <div>
           <div class="scan-focus-badge">Arahkan QR siswa ke area scanner</div>
           <video id="qr-video" muted playsinline></video>
-          <div class="actions no-print" style="margin-top:10px">
-            ${canScanNow ? `<button class="primary" data-start-camera>Scan Kamera</button><button class="ghost" data-stop-camera>Stop Kamera</button>` : ""}
-          </div>
         </div>
         <div class="scan-console">
           <label>Input Token QR Manual<input id="qr-token-input" placeholder="Tempel token QR siswa"></label>
           <button class="primary" data-scan-token ${!canScanNow ? "disabled" : ""}>Catat QR</button>
           ${!canScanNow && session.status === "open" ? `<p class="muted">${escapeHtml(scheduleOpenReason(schedule))}</p>` : ""}
           ${canScanNow ? `<button class="secondary" data-manual>Input Manual</button>` : ""}
-          <div class="status-list">${rows || "<p class='muted'>Belum ada siswa di kelas ini.</p>"}</div>
         </div>
       </div>
-    </section>`;
-  const root = byId("session-panel");
-  root.querySelector("[data-close-session]")?.addEventListener("click", () => closeSession(session.id));
-  root.querySelector("[data-start-camera]")?.addEventListener("click", () => startCamera(session.id));
-  root.querySelector("[data-stop-camera]")?.addEventListener("click", stopCamera);
+    </section>`);
+  const root = byId("modal-backdrop");
   root.querySelector("[data-scan-token]")?.addEventListener("click", () => scanToken(session.id, byId("qr-token-input").value.trim()));
   root.querySelector("[data-manual]")?.addEventListener("click", () => openManualAttendance(session.id));
-  root.querySelector("[data-export-session]")?.addEventListener("click", () => exportCsv("laporan_sesi_absensi", state.db.attendance_records.filter(r => r.session_id === session.id), "attendance_report"));
-  root.querySelector("[data-export-session-xls]")?.addEventListener("click", () => exportExcel("laporan_sesi_absensi", state.db.attendance_records.filter(r => r.session_id === session.id), "attendance_report"));
+  if (canScanNow) startCamera(session.id);
 }
 
 function scanToken(sessionId, token) {
   const session = findById("attendance_sessions", sessionId);
   if (!token) return toast("Token QR wajib diisi.", "error");
+  autoCloseSessionIfPast(session);
   if (!session || session.status !== "open") return toast("Sesi sudah tertutup.", "error");
   const schedule = findById("schedules", session.schedule_id);
   if (!canOpenScheduleNow(schedule)) return failBeep(), toast(scheduleOpenReason(schedule), "error");
@@ -2069,7 +2207,54 @@ function upsertRecord(session, student, status, method, note) {
 function closeSession(sessionId) {
   const session = findById("attendance_sessions", sessionId);
   if (!session || session.status !== "open") return toast("Hanya sesi terbuka yang bisa ditutup.", "error");
-  if (isHoliday(session.date)) return toast("Hari libur tidak diproses menjadi alfa.", "warn");
+  if (!processSessionClosure(session)) return;
+  saveDb(); stopCamera(); renderAttendance(); renderSession(session.id); toast("Sesi ditutup dan alfa diproses.", "ok");
+}
+
+function autoCloseSessionIfPast(session, options = {}) {
+  if (!session || session.status !== "open") return false;
+  const schedule = findById("schedules", session.schedule_id);
+  if (scheduleTimingState(schedule) !== "past") return false;
+  if (!processSessionClosure(session)) return false;
+  saveDb();
+  stopCamera();
+  if (!options.silent) toast("Sesi otomatis ditutup karena jam pelajaran sudah selesai.", "ok");
+  return true;
+}
+
+function scheduleConflict(data, row = null) {
+  const start = timeToMinutes(data.start_time);
+  const end = timeToMinutes(data.end_time);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return "Jam selesai harus lebih besar dari jam mulai.";
+  const samePeriod = schedule =>
+    schedule.id !== row?.id &&
+    !schedule.deleted_at &&
+    schedule.active !== "false" &&
+    schedule.academic_year_id === data.academic_year_id &&
+    schedule.semester_id === data.semester_id &&
+    schedule.day === data.day;
+  const overlaps = schedule => {
+    const otherStart = timeToMinutes(schedule.start_time);
+    const otherEnd = timeToMinutes(schedule.end_time);
+    return Number.isFinite(otherStart) && Number.isFinite(otherEnd) && start < otherEnd && end > otherStart;
+  };
+  const candidates = state.db.schedules.filter(schedule => samePeriod(schedule) && overlaps(schedule));
+  const classConflict = candidates.find(schedule => schedule.class_id === data.class_id);
+  if (classConflict) {
+    return `Kelas ${displayName("classes", findById("classes", data.class_id))} sudah punya jadwal ${displayName("subjects", findById("subjects", classConflict.subject_id))} pada ${classConflict.start_time} - ${classConflict.end_time}.`;
+  }
+  const teacherConflict = candidates.find(schedule => schedule.teacher_id === data.teacher_id);
+  if (teacherConflict) {
+    return `Guru ${displayName("teachers", findById("teachers", data.teacher_id))} sudah mengajar ${displayName("classes", findById("classes", teacherConflict.class_id))} pada ${teacherConflict.start_time} - ${teacherConflict.end_time}.`;
+  }
+  return "";
+}
+
+function processSessionClosure(session) {
+  if (isHoliday(session.date)) {
+    toast("Hari libur tidak diproses menjadi alfa.", "warn");
+    return false;
+  }
   studentsInClass(session.class_id).forEach(st => {
     const rec = state.db.attendance_records.find(r => r.session_id === session.id && r.student_id === st.id);
     if (rec && ["hadir", "terlambat"].includes(rec.status)) return;
@@ -2078,7 +2263,7 @@ function closeSession(sessionId) {
     else upsertRecord(session, st, "alfa", "system_auto", "Alfa otomatis saat sesi ditutup.");
   });
   Object.assign(session, { status: "closed", closed_by: currentUser().id, closed_at: now() });
-  saveDb(); stopCamera(); renderAttendance(); renderSession(session.id); toast("Sesi ditutup dan alfa diproses.", "ok");
+  return true;
 }
 
 function openManualAttendance(sessionId) {
@@ -2128,6 +2313,7 @@ function applyApprovedLeave(leave) {
 
 async function startCamera(sessionId) {
   if (!("BarcodeDetector" in window)) return toast("Browser ini belum mendukung scanner kamera. Gunakan input token manual.", "warn");
+  stopCamera();
   const video = byId("qr-video");
   state.videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
   video.srcObject = state.videoStream;
@@ -2167,34 +2353,15 @@ function renderReports() {
       <div id="report-output"></div>
     </section>`;
   byId("view").querySelectorAll("select,input").forEach(el => el.onchange = renderReportOutput);
-  byId("view").querySelector("[data-csv]").onclick = () => exportCsv("laporan_absensi", filteredRecords(), "attendance_report");
-  byId("view").querySelector("[data-excel]").onclick = () => exportExcel("laporan_absensi", filteredRecords(), "attendance_report");
+  byId("view").querySelector("[data-csv]").onclick = () => exportAttendanceMatrixCsv();
+  byId("view").querySelector("[data-excel]").onclick = () => exportAttendanceMatrixExcel();
   byId("view").querySelector("[data-pdf]").onclick = () => window.print();
   bindAcademicYearSwitcher(renderReports);
   renderReportOutput();
 }
 
 function renderReportOutput() {
-  const records = filteredRecords();
-  const grouped = new Map();
-  records.forEach(r => {
-    const st = findById("students", r.student_id);
-    if (!st) return;
-    const key = r.student_id;
-    if (!grouped.has(key)) grouped.set(key, { student: st, hadir: 0, terlambat: 0, izin: 0, sakit: 0, alfa: 0, total: 0 });
-    const g = grouped.get(key);
-    if (["hadir", "terlambat", "izin", "sakit", "alfa"].includes(r.status)) g[r.status]++;
-    g.total++;
-  });
-  const rows = [...grouped.values()].map((g, i) => {
-    const percent = g.total ? (((g.hadir + g.terlambat) / g.total) * 100).toFixed(1) : "0.0";
-    return `<tr><td>${i + 1}</td><td>${escapeHtml(g.student.nis || "")}</td><td>${escapeHtml(g.student.name)}</td><td>${g.hadir}</td><td>${g.terlambat}</td><td>${g.izin}</td><td>${g.sakit}</td><td>${g.alfa}</td><td>${g.total}</td><td>${percent}%</td><td>${percent >= 90 ? "Baik" : percent >= 75 ? "Perlu perhatian" : "Prioritas pembinaan"}</td></tr>`;
-  }).join("");
-  const setting = state.db.settings[0] || {};
-  byId("report-output").innerHTML = `
-    <div class="print-title"><h2>${escapeHtml(setting.school_name || "Nama Sekolah")}</h2><p>Laporan Kehadiran Semester</p><p>Tanggal cetak: ${today()}</p></div>
-    <div class="table-wrap"><table><thead><tr><th>No</th><th>NIS</th><th>Nama Siswa</th><th>Hadir</th><th>Terlambat</th><th>Izin</th><th>Sakit</th><th>Alfa</th><th>Total Sesi</th><th>Persentase</th><th>Keterangan</th></tr></thead><tbody>${rows || emptyRow(11)}</tbody></table></div>
-    <div class="signatures"><div>Wali Kelas<br><br><br><strong>(________________)</strong></div><div>Kepala Sekolah<br><br><br><strong>${escapeHtml(setting.headmaster_name || "(________________)")}</strong></div></div>`;
+  byId("report-output").innerHTML = attendanceMatrixHtml(attendanceMatrixReport());
 }
 
 function filteredRecords() {
@@ -2211,6 +2378,173 @@ function filteredRecords() {
   if (from) rows = rows.filter(r => r.date >= from);
   if (to) rows = rows.filter(r => r.date <= to);
   return rows;
+}
+
+function attendanceMatrixReport() {
+  const root = byId("view");
+  const records = filteredRecords();
+  const classId = root.querySelector('[name="class_id"]')?.value || "";
+  const subjectId = root.querySelector('[name="subject_id"]')?.value || "";
+  const semesterId = root.querySelector('[name="semester_id"]')?.value || "";
+  const setting = state.db.settings[0] || {};
+  const classIds = classId ? [classId] : [...new Set(records.map(r => r.class_id).filter(Boolean))];
+  let students = classId
+    ? studentsInClass(classId)
+    : state.db.students.filter(s => !s.deleted_at && classIds.includes(s.active_class_id));
+  if (!students.length) {
+    const ids = [...new Set(records.map(r => r.student_id).filter(Boolean))];
+    students = ids.map(id => findById("students", id)).filter(Boolean);
+  }
+  const sessionKeys = [];
+  const sessionMap = new Map();
+  records.forEach(record => {
+    const key = record.session_id || `${record.date}_${record.class_id}_${record.subject_id}_${record.teacher_id}_${record.start_time}`;
+    if (!sessionMap.has(key)) {
+      sessionKeys.push(key);
+      sessionMap.set(key, {
+        key,
+        date: record.date || "",
+        start_time: record.start_time || "",
+        end_time: record.end_time || "",
+        subject_id: record.subject_id,
+        teacher_id: record.teacher_id
+      });
+    }
+  });
+  sessionKeys.sort((a, b) => {
+    const x = sessionMap.get(a);
+    const y = sessionMap.get(b);
+    return `${x.date}${x.start_time}`.localeCompare(`${y.date}${y.start_time}`);
+  });
+  const sessions = sessionKeys.slice(0, 24).map(key => sessionMap.get(key));
+  const recordByStudentSession = new Map(records.map(record => [
+    `${record.student_id}|${record.session_id || `${record.date}_${record.class_id}_${record.subject_id}_${record.teacher_id}_${record.start_time}`}`,
+    record
+  ]));
+  const rows = students
+    .slice()
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
+    .map((student, index) => {
+      const totals = { sakit: 0, izin: 0, alfa: 0 };
+      const cells = sessions.map(session => {
+        const record = recordByStudentSession.get(`${student.id}|${session.key}`);
+        const mark = attendanceMark(record?.status);
+        if (record?.status === "sakit") totals.sakit++;
+        if (record?.status === "izin") totals.izin++;
+        if (record?.status === "alfa") totals.alfa++;
+        return mark;
+      });
+      return { index: index + 1, student, cells, totals };
+    });
+  const cls = findById("classes", classId) || (classIds.length === 1 ? findById("classes", classIds[0]) : null);
+  const subject = findById("subjects", subjectId) || (sessions.length ? findById("subjects", sessions[0].subject_id) : null);
+  const teacher = sessions.length ? findById("teachers", sessions[0].teacher_id) : null;
+  return { setting, class: cls, subject, teacher, semesterId, sessions, rows };
+}
+
+function attendanceMark(status) {
+  return ({ hadir: "H", terlambat: "T", izin: "I", sakit: "S", alfa: "A" })[status] || "";
+}
+
+function attendanceMatrixHtml(report) {
+  const sessionCount = 24;
+  const sessionCells = Array.from({ length: sessionCount }, (_, i) => `<th>${i + 1}</th>`).join("");
+  const dateCells = Array.from({ length: sessionCount }, (_, i) => `<td>${escapeHtml(shortDate(report.sessions[i]?.date || ""))}</td>`).join("");
+  const rowHtml = report.rows.map(row => `
+    <tr>
+      <td class="center">${row.index}.</td>
+      <td>${escapeHtml(row.student.nis || "")}</td>
+      <td>${escapeHtml(row.student.nisn || "")}</td>
+      <td class="student-name">${escapeHtml(row.student.name || "")}</td>
+      ${Array.from({ length: sessionCount }, (_, i) => `<td class="center">${escapeHtml(row.cells[i] || "")}</td>`).join("")}
+      <td class="center">${row.totals.sakit}</td>
+      <td class="center">${row.totals.izin}</td>
+      <td class="center">${row.totals.alfa}</td>
+    </tr>`).join("");
+  const logo = report.setting.school_logo ? `<img src="${escapeHtml(report.setting.school_logo)}" alt="Logo">` : "";
+  return `<div class="official-report">
+    <div class="official-report-head">
+      ${logo}
+      <div>
+        <h2>ABSENSI SISWA</h2>
+        <p>${escapeHtml(report.setting.school_name || "Nama Sekolah")}</p>
+      </div>
+    </div>
+    <div class="official-report-meta">
+      <span>Kelas : <strong>${escapeHtml(displayName("classes", report.class) || "-")}</strong></span>
+      <span>Mata Pelajaran : <strong>${escapeHtml(displayName("subjects", report.subject) || "Semua Mapel")}</strong></span>
+    </div>
+    <div class="table-wrap official-report-wrap">
+      <table class="attendance-matrix">
+        <thead>
+          <tr>
+            <th rowspan="3">Nomor Urut</th>
+            <th rowspan="3">Nomor Induk</th>
+            <th rowspan="3">NISN</th>
+            <th rowspan="3">Nama Siswa</th>
+            <th colspan="24">Kehadiran Siswa Pada Kegiatan Tatap Muka</th>
+            <th colspan="3">Jumlah</th>
+          </tr>
+          <tr>
+            ${sessionCells}
+            <th>S</th><th>I</th><th>A</th>
+          </tr>
+          <tr>
+            ${dateCells}
+            <th></th><th></th><th></th>
+          </tr>
+        </thead>
+        <tbody>${rowHtml || emptyRow(31)}</tbody>
+      </table>
+    </div>
+    <div class="official-report-note">Keterangan: H = Hadir, T = Terlambat, S = Sakit, I = Izin, A = Alfa. Tanggal cetak: ${today()}.</div>
+    <div class="signatures official-signatures">
+      <div>Guru Mata Pelajaran<br><br><br><strong>${escapeHtml(report.teacher?.name || "(________________)")}</strong></div>
+      <div>Kepala Sekolah<br><br><br><strong>${escapeHtml(report.setting.headmaster_name || "(________________)")}</strong></div>
+    </div>
+  </div>`;
+}
+
+function exportAttendanceMatrixCsv() {
+  const report = attendanceMatrixReport();
+  const header = ["No", "NIS", "NISN", "Nama Siswa", ...Array.from({ length: 24 }, (_, i) => `Pertemuan ${i + 1}`), "Sakit", "Izin", "Alfa"];
+  const rows = report.rows.map(row => [row.index, row.student.nis || "", row.student.nisn || "", row.student.name || "", ...Array.from({ length: 24 }, (_, i) => row.cells[i] || ""), row.totals.sakit, row.totals.izin, row.totals.alfa]);
+  const csv = [
+    ["ABSENSI SISWA"],
+    [`Kelas: ${displayName("classes", report.class) || "-"}`, `Mata Pelajaran: ${displayName("subjects", report.subject) || "Semua Mapel"}`],
+    header,
+    ...rows
+  ].map(row => row.map(csvCell).join(",")).join("\n");
+  downloadBlob(`absensi_siswa_${today()}.csv`, csv, "text/csv");
+}
+
+function exportAttendanceMatrixExcel() {
+  const report = attendanceMatrixReport();
+  const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+    body{font-family:Arial,sans-serif}
+    table{border-collapse:collapse;font-size:11px}
+    th,td{border:1px solid #000;padding:3px 5px;vertical-align:middle}
+    th{text-align:center;font-weight:bold}
+    .center{text-align:center}
+    .student-name{min-width:150px}
+    .title{font-weight:bold;text-align:center;font-size:14px}
+    .meta td{border:0;padding:5px}
+  </style></head><body>${attendanceMatrixHtml(report)}</body></html>`;
+  downloadBlob(`absensi_siswa_${today()}.xls`, html, "application/vnd.ms-excel");
+}
+
+function shortDate(date) {
+  if (!date) return "";
+  const parts = String(date).split("-");
+  return parts.length === 3 ? `${parts[2]}/${parts[1]}` : date;
+}
+
+function downloadBlob(filename, content, type) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([content], { type }));
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function renderUsers() {
@@ -2249,22 +2583,32 @@ function userRoleCard(user) {
 function renderProfile() {
   const user = currentUser();
   const adminProfile = user.role === "super_admin";
+  const readOnlyProfile = user.role === "siswa";
   const linkedInfo = user.role === "siswa"
     ? `NISN: ${escapeHtml(findById("students", user.student_id)?.nisn || "-")}`
     : user.teacher_id ? `NIP: ${escapeHtml(findById("teachers", user.teacher_id)?.nip || user.nip || "-")}` : "Akun administrator";
+  const biodata = profileDetails(user);
   byId("view").innerHTML = `
-    <section class="panel">
+    <section class="panel profile-page-panel">
       <div class="panel-head">
         <div><h2>Profil Saya</h2><p class="muted">${adminProfile ? "Administrator bisa mengubah email dan password." : "Login mengikuti NIP/NISN pada data Administrator."}</p></div>
+        ${!adminProfile ? `<button class="ghost" data-inline-logout>Keluar</button>` : ""}
       </div>
+      ${!adminProfile ? `<div class="profile-page-avatar">${profileAvatarHtml(user)}</div>` : ""}
+      ${!adminProfile ? `<div class="profile-biodata-grid profile-biodata-page">
+        ${biodata.map(([label, value]) => `<p><small>${escapeHtml(label)}</small><strong>${escapeHtml(value || "-")}</strong></p>`).join("")}
+      </div>` : ""}
+      ${readOnlyProfile ? `<div class="readonly-profile-note">Profil siswa mengikuti data master Administrator. Jika ada data yang salah, hubungi wali kelas atau administrator.</div>` : `
       <form id="profile-form" class="form-grid">
         <label>Nama<input name="name" value="${escapeHtml(user.name)}" required></label>
         <label>Role<input value="${escapeHtml(roles[user.role] || user.role)}" disabled></label>
         <label class="wide">Identitas Login<input value="${linkedInfo}" disabled></label>
         ${adminProfile ? `<label>Email Login<input type="email" name="email" value="${escapeHtml(user.email)}" required></label><label>Password Baru<input type="password" name="password" placeholder="Kosongkan jika tidak diubah"></label>` : ""}
         <div class="wide actions"><button class="primary">Simpan Profil</button></div>
-      </form>
+      </form>`}
     </section>`;
+  bindProfileSummaryActions();
+  if (readOnlyProfile) return;
   byId("profile-form").onsubmit = async e => {
     e.preventDefault();
     const fd = formData(e.target);
@@ -2791,12 +3135,14 @@ function openScheduleForClass(classId, day = "") {
 function showStudentQr(student) { showQrCards([student]); }
 function showQrCards(students) {
   modal("ID Card QR Siswa", `
+    <section class="qr-popup-panel">
     <div class="actions no-print">
       <button class="secondary" onclick="window.print()">Cetak Semua</button>
     </div>
     <div class="qr-grid id-card-grid">
       ${students.map(s => studentIdCardHtml(s)).join("")}
-    </div>`);
+    </div>
+    </section>`);
   setTimeout(() => {
     document.querySelectorAll("[data-qrcode]").forEach(el => {
       if (window.QRCode) new QRCode(el, { text: el.dataset.qrcode, width: 156, height: 156, correctLevel: QRCode.CorrectLevel.H });
@@ -2813,7 +3159,7 @@ function studentIdCardHtml(student) {
   return `
     <article class="id-card" data-student-card="${student.id}">
       <div class="id-card-brand">
-        <span class="id-logo-mark">${escapeHtml(initials(setting.school_name || "EA"))}</span>
+        <span class="id-logo-mark">${schoolLogoHtml()}</span>
         <strong>${escapeHtml(setting.school_name || "EduAttend Pro")}</strong>
       </div>
       <div class="id-art">
@@ -2861,9 +3207,19 @@ async function downloadStudentIdCard(studentId) {
   ctx.textAlign = "center";
   ctx.fillText(setting.school_name || "EduAttend Pro", 340, 94);
   roundedRect(ctx, 142, 50, 42, 42, 8, "#111111");
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "900 17px Arial";
-  ctx.fillText(initials(setting.school_name || "EA"), 163, 77);
+  if (setting.school_logo) {
+    try {
+      const logo = await loadImage(setting.school_logo);
+      ctx.save();
+      roundedRectClip(ctx, 142, 50, 42, 42, 8);
+      ctx.drawImage(logo, 142, 50, 42, 42);
+      ctx.restore();
+    } catch {
+      drawCanvasLogoInitials(ctx, setting.school_name || "EA", 163, 77);
+    }
+  } else {
+    drawCanvasLogoInitials(ctx, setting.school_name || "EA", 163, 77);
+  }
 
   ctx.fillStyle = "#ff6500";
   ctx.beginPath();
@@ -3222,6 +3578,69 @@ function statusText(v) { return ({ open: "Terbuka", closed: "Tertutup", cancelle
 function boolText(v) { return v === true || v === "true" ? "Aktif" : "Nonaktif"; }
 function byId(id) { return document.getElementById(id); }
 function formData(form) { return Object.fromEntries(new FormData(form).entries()); }
+async function formDataWithImages(form) {
+  const fd = new FormData(form);
+  const out = Object.fromEntries(fd.entries());
+  const imageFiles = [...fd.entries()].filter(([key, value]) => key.endsWith("__file") && value instanceof File && value.size);
+  for (const [key, file] of imageFiles) {
+    out[key.replace(/__file$/, "")] = await imageFileToDataUrl(file);
+    delete out[key];
+  }
+  Object.keys(out).forEach(key => {
+    if (key.endsWith("__file")) delete out[key];
+  });
+  return out;
+}
+
+function roundedRectClip(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+  ctx.clip();
+}
+
+function drawCanvasLogoInitials(ctx, name, x, y) {
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "900 17px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText(initials(name), x, y);
+}
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+function imageFileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => resolve(reader.result);
+      img.onload = () => {
+        const max = 900;
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 function emptyRow(cols) { return `<tr><td colspan="${cols}" class="muted">Belum ada data.</td></tr>`; }
 function escapeHtml(v) { return String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function csvCell(v) { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s; }
@@ -3234,7 +3653,10 @@ function modal(title, body) {
   document.body.appendChild(el);
   el.querySelectorAll("[data-close]").forEach(b => b.onclick = closeModal);
 }
-function closeModal() { byId("modal-backdrop")?.remove(); }
+function closeModal() {
+  stopCamera();
+  byId("modal-backdrop")?.remove();
+}
 function toast(msg, type = "ok") {
   const t = byId("toast");
   t.textContent = msg; t.className = `toast ${type} show`;

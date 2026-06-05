@@ -2382,6 +2382,58 @@ tbody tr:hover td {
   gap: 10px;
 }
 
+.period-hub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+}
+
+.period-card {
+  min-height: 150px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid #e3e0da;
+  border-radius: 18px;
+  background: #fff;
+  color: #171717;
+  text-align: left;
+  box-shadow: 0 14px 32px rgba(23, 23, 23, .04);
+}
+
+.period-card span {
+  width: 44px;
+  height: 44px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 14px;
+  background: #f6f5f2;
+  color: #171717;
+  font-weight: 900;
+}
+
+.period-card strong {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 22px;
+  line-height: 1.05;
+}
+
+.period-card small {
+  color: #6f6b63;
+  line-height: 1.45;
+}
+
+.period-card:hover,
+.period-card:focus-visible {
+  border-color: #171717;
+  transform: translateY(-1px);
+}
+
+.export-select {
+  min-width: 132px;
+}
+
 .modal-form-actions {
   position: sticky;
   bottom: -18px;

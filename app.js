@@ -259,7 +259,7 @@ function emptyDb() {
 async function init() {
   state.db = await loadDb();
   state.selectedAcademicYearId = resolveStoredAcademicYearId();
-  state.session = loadSession();
+  state.session = validateStoredSession(loadSession());
   bindAuth();
   bindShell();
   if (!state.db.users.length) showSetup();
@@ -551,6 +551,15 @@ async function persistRemoteDb(db) {
 }
 function loadSession() { return JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); }
 function saveSession(session) { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); state.session = session; }
+function validateStoredSession(session) {
+  if (!session?.userId) return null;
+  const user = state.db.users.find(item => item.id === session.userId && item.active !== "false");
+  if (!user || !roles[session.role || user.role] || !canLoginAsRole(user, session.role || user.role)) {
+    localStorage.removeItem(SESSION_KEY);
+    return null;
+  }
+  return session;
+}
 function now() { return new Date().toISOString(); }
 function today() { return new Date().toISOString().slice(0, 10); }
 function uid(prefix) { return `${prefix}_${crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2)}`; }
@@ -629,13 +638,12 @@ function findLoginUser(role, identifier) {
   }
   if (["guru", "wali_kelas", "kepala_sekolah"].includes(role)) {
     if (role === "kepala_sekolah" && value.includes("@")) {
-      return state.db.users.find(u => u.role === "super_admin" && u.email?.toLowerCase() === value)
-        || state.db.users.find(u => u.role === "kepala_sekolah" && u.email?.toLowerCase() === value);
+      return state.db.users.find(u => u.role === "super_admin" && u.email?.toLowerCase() === value);
     }
     const teacher = state.db.teachers.find(t => t.nip?.toLowerCase() === value && !t.deleted_at);
     const linked = teacher ? state.db.users.find(u => u.teacher_id === teacher.id && u.role === role) : null;
     if (linked) return linked;
-    if (role === "guru" && teacher && teacherHasTeachingSchedule(teacher.id)) {
+    if (role === "guru" && teacher) {
       return state.db.users.find(u => u.teacher_id === teacher.id && u.role === "wali_kelas") || null;
     }
     if (role === "kepala_sekolah") return state.db.users.find(u => u.role === "kepala_sekolah" && (u.nip?.toLowerCase() === value || u.email?.toLowerCase() === value));
@@ -645,11 +653,7 @@ function findLoginUser(role, identifier) {
 
 function canLoginAsRole(user, role) {
   if (user.role === role) return true;
-  return role === "guru" && user.role === "wali_kelas" && teacherHasTeachingSchedule(user.teacher_id);
-}
-
-function teacherHasTeachingSchedule(teacherId) {
-  return state.db.schedules.some(s => s.teacher_id === teacherId && s.active !== "false");
+  return role === "guru" && user.role === "wali_kelas";
 }
 
 function bindShell() {
@@ -961,8 +965,8 @@ function adminMenuGroups() {
   return [
     { label: "Utama", items: [["dashboard", "Dashboard"], ["attendance", "Sesi & Scan QR"], ["history", "History"], ["reports", "Laporan"]] },
     { label: "Akademik", items: [["students", "Siswa & Kelas"], ["teachers", "Guru"], ["subjects", "Mapel & Jadwal"]] },
-    { label: "Periode", items: [["academic_years", "Tahun Ajaran"], ["semesters", "Semester"], ["lesson_hours", "Jam Pelajaran"], ["holidays", "Hari Libur"]] },
-    { label: "Sistem", items: [["leave_requests", "Izin & Sakit"], ["meetings", "Rapat"], ["users", "Pengguna & Role"], ["settings", "Pengaturan"], ["profile", "Profil Saya"]] }
+    { label: "Periode", items: [["periods", "Periode Akademik"]] },
+    { label: "Sistem", items: [["leave_requests", "Izin & Sakit"], ["meetings", "Rapat"], ["audit_logs", "Audit Sistem"], ["users", "Pengguna & Role"], ["settings", "Pengaturan"], ["profile", "Profil Saya"]] }
   ];
 }
 
@@ -979,13 +983,11 @@ function menuItemsForCurrentUser() {
     ["classes", "Kelas", canEditMaster()],
     ["subjects", "Mapel & Jadwal", canEditMaster()],
     ["schedules", "Jadwal Pelajaran", user.role === "guru"],
-    ["academic_years", "Tahun Ajaran", canEditMaster()],
-    ["semesters", "Semester", canEditMaster()],
-    ["lesson_hours", "Jam Pelajaran", canEditMaster()],
-    ["holidays", "Hari Libur", canEditMaster()],
+    ["periods", "Periode Akademik", canEditMaster()],
     ["leave_requests", "Izin & Sakit", ["super_admin", "guru", "wali_kelas"].includes(user.role)],
     ["meetings", "Rapat", user.role === "kepala_sekolah"],
     ["reports", "Laporan", canReport()],
+    ["audit_logs", "Audit Sistem", ["super_admin", "kepala_sekolah"].includes(user.role)],
     ["users", "Pengguna & Role", user.role === "super_admin"],
     ["settings", "Pengaturan", canEditMaster()],
     ["profile", "Profil Saya", user.role !== "super_admin"]
@@ -1022,15 +1024,19 @@ function canAccessFull(page) {
   return menuItemsForCurrentUser().some(([id]) => id === page);
 }
 
+function canAccessPeriodChild(page) {
+  return canEditMaster() && ["academic_years", "semesters", "lesson_hours", "holidays"].includes(page);
+}
+
 function navigate(page) {
   stopCamera();
   if (page === "my_qr") return showMyQr();
   if (page === "mobile_settings") return renderMobileSettingsHub();
-  if (!canAccess(page)) page = landingPageForRole(currentUser().role);
+  if (!canAccess(page) && !canAccessPeriodChild(page)) page = landingPageForRole(currentUser().role);
   state.page = page;
   document.querySelector(".sidebar").classList.remove("open");
   renderMenu();
-  const titles = { dashboard: "Dashboard", attendance: "Scan", history: "History", subjects: "Mapel & Jadwal", reports: "Reports", users: "Pengguna & Role", profile: "Profile" };
+  const titles = { dashboard: "Dashboard", attendance: "Scan", history: "History", subjects: "Mapel & Jadwal", reports: "Reports", users: "Pengguna & Role", profile: "Profile", periods: "Periode Akademik", audit_logs: "Audit Sistem" };
   const schema = schemas[page];
   byId("page-title").textContent = titles[page] || schema?.title || "Aplikasi";
   byId("page-subtitle").textContent = page === "attendance" ? "Buka jadwal aktif terlebih dahulu sebelum scan QR siswa." : "";
@@ -1042,6 +1048,8 @@ function navigate(page) {
   if (page === "student_today") return renderStudentToday();
   if (page === "reports") return renderReports();
   if (page === "meetings") return renderMeetings();
+  if (page === "periods") return renderPeriodHub();
+  if (page === "audit_logs") return renderAuditLogs();
   if (page === "users") return renderUsers();
   if (page === "profile") return renderProfile();
   return renderCrud(page);
@@ -1085,6 +1093,104 @@ function renderMobileSettingsHub() {
   byId("view").querySelectorAll("[data-menu-hub]").forEach(btn => btn.onclick = () => navigate(btn.dataset.menuHub));
   const logoutBtn = byId("view").querySelector("[data-menu-logout]");
   if (logoutBtn) logoutBtn.onclick = logoutApp;
+}
+
+function renderPeriodHub() {
+  const items = [
+    ["academic_years", "Tahun Ajaran", "Atur periode besar 1 tahun ajaran.", state.db.academic_years.filter(r => !r.deleted_at).length],
+    ["semesters", "Semester", "Hubungkan ganjil/genap ke tanggal resmi.", state.db.semesters.filter(r => !r.deleted_at && r.academic_year_id === selectedAcademicYearId()).length],
+    ["lesson_hours", "Jam Pelajaran", "Template jam untuk mencegah input jadwal sembarang.", state.db.lesson_hours.filter(r => !r.deleted_at).length],
+    ["holidays", "Hari Libur", "Tanggal libur agar alfa tidak dibuat otomatis.", state.db.holidays.filter(r => !r.deleted_at).length]
+  ];
+  byId("view").innerHTML = `
+    <section class="panel period-hub">
+      <div class="panel-head">
+        <div>
+          <span class="eyebrow">Periode Akademik</span>
+          <h2>Atur Kalender Sekolah dari Satu Tempat</h2>
+          <p class="muted">Menu periode disatukan supaya operator tidak bolak-balik mencari tahun ajaran, semester, jam pelajaran, dan hari libur.</p>
+        </div>
+        <div class="actions">${academicYearSwitcher("periods")}</div>
+      </div>
+      <div class="period-hub-grid">
+        ${items.map(([id, title, desc, count]) => `
+          <button class="period-card" data-period-page="${id}">
+            <span>${escapeHtml(String(count))}</span>
+            <strong>${escapeHtml(title)}</strong>
+            <small>${escapeHtml(desc)}</small>
+          </button>`).join("")}
+      </div>
+    </section>`;
+  bindAcademicYearSwitcher(renderPeriodHub);
+  byId("view").querySelectorAll("[data-period-page]").forEach(btn => btn.onclick = () => navigate(btn.dataset.periodPage));
+}
+
+function renderAuditLogs() {
+  const rows = auditLogRows();
+  byId("view").innerHTML = `
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <span class="eyebrow">Audit Sistem</span>
+          <h2>Riwayat Perubahan Absensi</h2>
+          <p class="muted">Halaman ini menampilkan perubahan status yang memiliki alasan, termasuk koreksi manual dan perubahan izin/sakit.</p>
+        </div>
+        <div class="actions">
+          <input data-audit-search placeholder="Cari siswa, status, alasan..." value="${escapeHtml(state.filters.auditLogs || "")}">
+          <select class="table-action-select" data-audit-export aria-label="Export audit">
+            <option value="">Export</option>
+            <option value="csv">CSV</option>
+            <option value="excel">Excel</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Waktu</th><th>Siswa</th><th>Kelas</th><th>Dari</th><th>Ke</th><th>Diubah Oleh</th><th>Alasan</th></tr></thead>
+          <tbody>${rows.map(row => `
+            <tr>
+              <td>${escapeHtml(row.waktu)}</td>
+              <td>${escapeHtml(row.siswa)}</td>
+              <td>${escapeHtml(row.kelas)}</td>
+              <td>${escapeHtml(row.dari)}</td>
+              <td>${escapeHtml(row.ke)}</td>
+              <td>${escapeHtml(row.oleh)}</td>
+              <td>${escapeHtml(row.alasan)}</td>
+            </tr>`).join("") || emptyRow(7)}</tbody>
+        </table>
+      </div>
+    </section>`;
+  byId("view").querySelector("[data-audit-search]")?.addEventListener("input", e => {
+    state.filters.auditLogs = e.target.value.toLowerCase();
+    renderAuditLogs();
+  });
+  byId("view").querySelector("[data-audit-export]")?.addEventListener("change", e => {
+    const value = e.target.value;
+    e.target.value = "";
+    if (value === "csv") exportCsv("audit_logs", rows);
+    if (value === "excel") exportExcel("audit_logs", rows);
+  });
+}
+
+function auditLogRows() {
+  const accessibleRecordIds = new Set(scopedAttendanceRecords().map(record => record.id));
+  const q = state.filters.auditLogs || "";
+  return state.db.attendance_logs
+    .filter(log => !log.deleted_at && accessibleRecordIds.has(log.attendance_record_id))
+    .map(log => {
+      const record = findById("attendance_records", log.attendance_record_id);
+      return {
+        waktu: log.created_at?.slice(0, 16).replace("T", " ") || "",
+        siswa: displayName("students", findById("students", log.student_id)) || "-",
+        kelas: displayName("classes", findById("classes", record?.class_id)) || "-",
+        dari: statusLabels[log.old_status] || log.old_status || "-",
+        ke: statusLabels[log.new_status] || log.new_status || "-",
+        oleh: displayName("users", findById("users", log.changed_by)) || "-",
+        alasan: log.reason || "-"
+      };
+    })
+    .filter(row => !q || JSON.stringify(row).toLowerCase().includes(q))
+    .sort((a, b) => b.waktu.localeCompare(a.waktu));
 }
 
 function menuInitial(label) {
@@ -2755,7 +2861,7 @@ function renderReports() {
   const reportFilters = reportFilterValues();
   byId("view").innerHTML = `
     <section class="panel">
-      <div class="panel-head"><div><h2>Filter Laporan</h2><p class="muted">Persentase = (Hadir + Terlambat) / Total sesi wajib x 100.</p></div><div class="actions report-actions">${academicYearSwitcher("reports")}<div class="export-group" aria-label="Export laporan"><button class="secondary" data-csv>CSV</button><button class="secondary" data-excel>Excel</button><button class="secondary" data-pdf>PDF</button></div></div></div>
+      <div class="panel-head"><div><h2>Filter Laporan</h2><p class="muted">Persentase = (Hadir + Terlambat) / Total sesi wajib x 100.</p></div><div class="actions report-actions">${academicYearSwitcher("reports")}${reportExportSelect()}</div></div>
       <div class="report-filter-shell">
         <div class="report-filter-title"><span>Filter Bulan</span><button type="button" class="ghost" data-reset-report>Reset</button></div>
         <div class="report-auto-semester">Semester otomatis: <strong id="report-auto-semester">${escapeHtml(reportSemesterName(selectedMonth))}</strong></div>
@@ -2782,11 +2888,24 @@ function renderReports() {
     byId("report-month").value = state.filters.reportMonth;
     renderReports();
   });
-  byId("view").querySelector("[data-csv]").onclick = () => exportAttendanceMatrixCsv();
-  byId("view").querySelector("[data-excel]").onclick = () => exportAttendanceMatrixExcel();
-  byId("view").querySelector("[data-pdf]").onclick = () => window.print();
+  byId("view").querySelector("[data-report-export]")?.addEventListener("change", e => {
+    const value = e.target.value;
+    e.target.value = "";
+    if (value === "csv") exportAttendanceMatrixCsv();
+    if (value === "excel") exportAttendanceMatrixExcel();
+    if (value === "pdf") window.print();
+  });
   bindAcademicYearSwitcher(renderReports);
   renderReportOutput();
+}
+
+function reportExportSelect() {
+  return `<select class="table-action-select export-select" data-report-export aria-label="Export laporan">
+    <option value="">Export</option>
+    <option value="csv">CSV</option>
+    <option value="excel">Excel</option>
+    <option value="pdf">Cetak / PDF</option>
+  </select>`;
 }
 
 function currentMonthValue() {

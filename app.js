@@ -58,13 +58,14 @@ const schemas = {
       ["nip", "NIP", "text", false],
       ["name", "Nama Guru", "text", true],
       ["phone", "Nomor HP", "text", false],
-      ["unit", "Unit Kepala Sekolah", "select", false, educationUnitOptions(true)],
+      ["staff_role", "Jabatan Login", "select", true, [["guru", "Guru"], ["wali_kelas", "Wali Kelas"], ["kepala_sekolah", "Kepala Sekolah"]]],
+      ["unit", "Unit Lembaga", "select", false, educationUnitOptions(true)],
       ["address", "Alamat", "textarea", false],
       ["active", "Status Aktif", "select", true, [["true", "Aktif"], ["false", "Nonaktif"]]],
       ["login_enabled", "Akun Login", "select", true, [["true", "Aktif"], ["false", "Nonaktif"]]],
       ["is_homeroom", "Role Wali Kelas", "select", true, [["false", "Tidak"], ["true", "Ya"]]]
     ],
-    columns: [["nip", "NIP"], ["name", "Nama"], ["unit", "Unit"], ["phone", "HP"], ["active", "Status", boolText], ["is_homeroom", "Wali Kelas", boolText]]
+    columns: [["nip", "NIP"], ["name", "Nama"], ["staff_role", "Jabatan", roleLabel], ["unit", "Unit"], ["phone", "HP"], ["active", "Status", boolText], ["is_homeroom", "Wali Kelas", boolText]]
   },
   classes: {
     title: "Kelas",
@@ -294,6 +295,7 @@ function normalizeDb(db, persistLocal = false) {
   tables.forEach(t => db[t] ||= []);
   removeDeprecatedRoles(db);
   removeNonAdminEmails(db);
+  normalizeTeacherRoles(db);
   repairAdminRole(db);
   ensureStarterAccess(db);
   if (!db.students.length && !db.teachers.length) {
@@ -308,6 +310,15 @@ function removeNonAdminEmails(db) {
   db.teachers.forEach(t => delete t.email);
   db.users.forEach(u => {
     if (u.role !== "super_admin") delete u.email;
+  });
+}
+
+function normalizeTeacherRoles(db) {
+  db.teachers.forEach(teacher => {
+    const linkedUser = db.users.find(user => user.teacher_id === teacher.id && ["guru", "wali_kelas", "kepala_sekolah"].includes(user.role));
+    teacher.staff_role ||= linkedUser?.role || (teacher.is_homeroom === "true" ? "wali_kelas" : "guru");
+    if (teacher.staff_role === "wali_kelas") teacher.is_homeroom = "true";
+    if (teacher.staff_role === "kepala_sekolah") teacher.is_homeroom = "false";
   });
 }
 
@@ -2228,6 +2239,9 @@ function normalizeRecord(table, data, row) {
   }
   if (table === "teachers") {
     data.login_enabled ||= "true";
+    data.staff_role ||= data.is_homeroom === "true" ? "wali_kelas" : "guru";
+    if (data.staff_role === "wali_kelas") data.is_homeroom = "true";
+    if (data.staff_role === "kepala_sekolah") data.is_homeroom = "false";
   }
   if (table === "classes") {
     data.unit ||= classUnit(data);
@@ -2331,7 +2345,7 @@ function ensureActiveStudentHistory(student, cls) {
 
 async function syncTeacherUser(teacher) {
   if (teacher.login_enabled !== "true") return;
-  const role = teacher.is_homeroom === "true" ? "wali_kelas" : "guru";
+  const role = teacher.staff_role || (teacher.is_homeroom === "true" ? "wali_kelas" : "guru");
   return syncLinkedUser({
     role,
     linkKey: "teacher_id",
@@ -4024,6 +4038,8 @@ function prepareExportRows(name, rows, type) {
     "No": i + 1,
     "NIP": t.nip || "",
     "Nama Guru": t.name || "",
+    "Jabatan Login": roleLabel(t.staff_role || (t.is_homeroom === "true" ? "wali_kelas" : "guru")),
+    "Unit": t.unit || "",
     "Nomor HP": t.phone || "",
     "Alamat": t.address || "",
     "Status": t.active === "false" ? "Nonaktif" : "Aktif",
@@ -4245,6 +4261,7 @@ function displayName(table, row) {
   if (table === "teachers" || table === "students" || table === "users") return row.name;
   return row.name || row.id;
 }
+function roleLabel(value) { return roles[value] || (value === "guru" ? "Guru" : value === "wali_kelas" ? "Wali Kelas" : value || "-"); }
 function dayName(date) { return ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"][date.getDay()]; }
 function badge(status) { return `<span class="badge ${status}">${escapeHtml(statusLabels[status] || statusText(status))}</span>`; }
 function statusText(v) { return ({ open: "Terbuka", closed: "Tertutup", cancelled: "Dibatalkan", scheduled: "Terjadwal", done: "Selesai", true: "Aktif", false: "Nonaktif" })[v] || v || "-"; }

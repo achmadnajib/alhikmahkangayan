@@ -966,10 +966,37 @@ function renderMenu() {
 }
 
 function mobileMenuButton([id, label], index) {
-  const user = currentUser();
   const slot = index + 1;
   const center = slot === 3;
-  return `<button data-page="${id}" data-mobile-slot="${slot}" ${center ? `data-mobile-center="true"` : ""} style="--mobile-slot:${slot}" class="${state.page === id ? "active" : ""}">${label}</button>`;
+  return `<button data-page="${id}" data-mobile-slot="${slot}" ${center ? `data-mobile-center="true"` : ""} style="--mobile-slot:${slot}" class="${state.page === id ? "active" : ""}" aria-label="${escapeHtml(label)}">
+    ${iconForPage(id)}
+    <span class="nav-label">${escapeHtml(label)}</span>
+  </button>`;
+}
+
+function iconForPage(page) {
+  const icons = {
+    dashboard: "M3 12h7V3H3v9Zm11 9h7V3h-7v18ZM3 21h7v-7H3v7Z",
+    attendance: "M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h3v3h3v3h-6v-6Z",
+    my_qr: "M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm11 0h2v2h-2v-2Zm4 0h1v6h-4v-2h3v-4Z",
+    student_today: "M7 3v3M17 3v3M4 8h16M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm3 8 2 2 4-5",
+    history: "M3 12a9 9 0 1 0 3-6.7M3 4v6h6M12 7v6l4 2",
+    reports: "M5 3h14v18H5V3Zm4 5h6M9 12h6M9 16h3",
+    students: "M8 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm8 2a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM2 21a6 6 0 0 1 12 0M14 21a5 5 0 0 1 8 0",
+    teachers: "M4 19V5l8-3 8 3v14l-8 3-8-3Zm4-9h8M8 14h8",
+    subjects: "M4 5a3 3 0 0 1 3-3h13v17H7a3 3 0 0 0-3 3V5Zm3 14h13",
+    schedules: "M4 5h16v16H4V5Zm4-3v6M16 2v6M4 10h16",
+    periods: "M4 4h16v4H4V4Zm0 8h16v8H4v-8Zm4 2v4M12 14v4M16 14v4",
+    leave_requests: "M5 3h14v18H5V3Zm4 6h6M9 13h6M9 17h3",
+    meetings: "M4 5h16v10H7l-3 3V5Zm5 4h6",
+    audit_logs: "M5 3h14v18H5V3Zm4 5h6M9 12h6M9 16h3",
+    users: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 9a7 7 0 0 1 14 0",
+    settings: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v3M12 18v3M4.9 4.9 7 7M17 17l2.1 2.1M3 12h3M18 12h3M4.9 19.1 7 17M17 7l2.1-2.1",
+    profile: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-6 9a6 6 0 0 1 12 0",
+    mobile_settings: "M4 6h16M4 12h16M4 18h16"
+  };
+  const path = icons[page] || icons.dashboard;
+  return `<svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"></path></svg>`;
 }
 
 function adminMenuGroups() {
@@ -1160,13 +1187,13 @@ function renderAuditLogs() {
           <thead><tr><th>Waktu</th><th>Siswa</th><th>Kelas</th><th>Dari</th><th>Ke</th><th>Diubah Oleh</th><th>Alasan</th></tr></thead>
           <tbody>${rows.map(row => `
             <tr>
-              <td>${escapeHtml(row.waktu)}</td>
-              <td>${escapeHtml(row.siswa)}</td>
-              <td>${escapeHtml(row.kelas)}</td>
-              <td>${escapeHtml(row.dari)}</td>
-              <td>${escapeHtml(row.ke)}</td>
-              <td>${escapeHtml(row.oleh)}</td>
-              <td>${escapeHtml(row.alasan)}</td>
+              <td data-label="Waktu">${escapeHtml(row.waktu)}</td>
+              <td data-label="Siswa">${escapeHtml(row.siswa)}</td>
+              <td data-label="Kelas">${escapeHtml(row.kelas)}</td>
+              <td data-label="Dari">${escapeHtml(row.dari)}</td>
+              <td data-label="Ke">${escapeHtml(row.ke)}</td>
+              <td data-label="Diubah Oleh">${escapeHtml(row.oleh)}</td>
+              <td data-label="Alasan">${escapeHtml(row.alasan)}</td>
             </tr>`).join("") || emptyRow(7)}</tbody>
         </table>
       </div>
@@ -1212,13 +1239,13 @@ function renderQuickTools() {
   const user = currentUser();
   if (["super_admin", "kepala_sekolah"].includes(user.role)) {
     const tools = [
-      ["dashboard", "Dashboard", "D", canAccess("dashboard")],
-      ["students", "Siswa", "S", canAccess("students")],
-      ["teachers", "Guru", "G", canAccess("teachers")],
-      ["subjects", "Mapel", "M", canAccess("subjects")],
-      ["reports", "Laporan", "L", canAccess("reports")]
-    ].filter(t => t[3]);
-    byId("quick-tools").innerHTML = tools.map(([page, label, icon]) => `<button class="${state.page === page ? "active" : ""}" data-quick="${page}" title="${label}"><span>${icon}</span>${label}</button>`).join("");
+      ["dashboard", "Dashboard", canAccess("dashboard")],
+      ["students", "Siswa", canAccess("students")],
+      ["teachers", "Guru", canAccess("teachers")],
+      ["subjects", "Mapel", canAccess("subjects")],
+      ["reports", "Laporan", canAccess("reports")]
+    ].filter(t => t[2]);
+    byId("quick-tools").innerHTML = tools.map(([page, label]) => `<button class="${state.page === page ? "active" : ""}" data-quick="${page}" title="${label}">${iconForPage(page)}<span>${label}</span></button>`).join("");
     byId("quick-tools").querySelectorAll("button").forEach(btn => btn.onclick = () => navigate(btn.dataset.quick));
     return;
   }
@@ -1228,7 +1255,7 @@ function renderQuickTools() {
     ["reports", "Reports", "▤", canAccess("reports")],
     ["profile", "Profile", "♙", canAccess("profile")]
   ].filter(t => t[3]);
-  byId("quick-tools").innerHTML = tools.map(([page, label, icon]) => `<button class="${state.page === page ? "active" : ""}" data-quick="${page}" title="${label}"><span>${icon}</span>${label}</button>`).join("");
+  byId("quick-tools").innerHTML = tools.map(([page, label]) => `<button class="${state.page === page ? "active" : ""}" data-quick="${page}" title="${label}">${iconForPage(page)}<span>${label}</span></button>`).join("");
   byId("quick-tools").querySelectorAll("button").forEach(btn => btn.onclick = () => {
     if (btn.dataset.quick === "attendance" && currentUser().role === "siswa") return showMyQr();
     navigate(btn.dataset.quick);
@@ -1735,7 +1762,7 @@ function renderCrud(table) {
   if (table === "leave_requests") return renderLeaveClassOverview();
   const canWrite = table === "settings" ? canEditMaster() : canEditMaster() || canCreateLeaveRequest(table);
   const data = visibleRows(table);
-  const rows = data.map(row => `<tr>${schema.columns.map(([key, , fmt]) => `<td>${fmt ? fmt(row[key], row) : escapeHtml(row[key] ?? "")}</td>`).join("")}<td class="row-actions">${crudActions(table, row, canWrite)}</td></tr>`).join("");
+  const rows = data.map(row => `<tr>${schema.columns.map(([key, label, fmt]) => `<td data-label="${escapeHtml(label)}">${fmt ? fmt(row[key], row) : escapeHtml(row[key] ?? "")}</td>`).join("")}<td data-label="Aksi" class="row-actions">${crudActions(table, row, canWrite)}</td></tr>`).join("");
   byId("view").innerHTML = `
     <section class="panel">
       <div class="panel-head">

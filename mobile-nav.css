@@ -84,16 +84,17 @@
   }
 
   #menu button::before {
-    margin: 0 !important;
-    width: 28px !important;
-    height: 28px !important;
-    border-radius: 999px !important;
-    display: grid !important;
-    place-items: center !important;
-    background: transparent !important;
-    color: currentColor !important;
-    font-size: 18px !important;
-    line-height: 1 !important;
+    display: none !important;
+    content: "" !important;
+  }
+
+  #menu button .app-icon {
+    width: 22px !important;
+    height: 22px !important;
+  }
+
+  #menu button .nav-label {
+    display: none !important;
   }
 
   #menu button.active,
@@ -119,27 +120,10 @@
     box-shadow: none !important;
   }
 
-  #menu button[data-mobile-center="true"]::before {
-    width: 28px !important;
-    height: 28px !important;
-    border-radius: 999px !important;
-    background: transparent !important;
+  #menu button[data-mobile-center="true"] .app-icon {
+    width: 24px !important;
+    height: 24px !important;
   }
-
-  #menu button[data-page="dashboard"]::before { content: "\2302" !important; }
-  #menu button[data-page="attendance"]::before { content: "\25A6" !important; }
-  #menu button[data-page="my_qr"]::before { content: "\25A6" !important; }
-  #menu button[data-page="history"]::before { content: "\21BA" !important; }
-  #menu button[data-page="student_today"]::before { content: "\25A4" !important; }
-  #menu button[data-page="reports"]::before { content: "\25A4" !important; }
-  #menu button[data-page="profile"]::before { content: "\2659" !important; }
-  #menu button[data-page="students"]::before { content: "\25A5" !important; }
-  #menu button[data-page="teachers"]::before { content: "\265F" !important; }
-  #menu button[data-page="subjects"]::before { content: "\25A7" !important; }
-  #menu button[data-page="meetings"]::before { content: "\25F7" !important; }
-  #menu button[data-page="leave_requests"]::before { content: "!" !important; }
-  #menu button[data-page="settings"]::before { content: "\2699" !important; }
-  #menu button[data-page="mobile_settings"]::before { content: "\2699" !important; }
 }
 
 .student-quote-card {

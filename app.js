@@ -263,6 +263,7 @@ async function init() {
   state.session = validateStoredSession(loadSession());
   bindAuth();
   bindShell();
+  startTableLabelObserver();
   if (!state.db.users.length) showSetup();
   else if (!state.session) showLogin();
   else showApp();
@@ -310,6 +311,27 @@ function removeNonAdminEmails(db) {
   db.teachers.forEach(t => delete t.email);
   db.users.forEach(u => {
     if (u.role !== "super_admin") delete u.email;
+  });
+}
+
+function startTableLabelObserver() {
+  const view = byId("view");
+  if (!view || view.dataset.tableObserverReady === "true") return;
+  view.dataset.tableObserverReady = "true";
+  const decorate = () => decorateResponsiveTables(view);
+  new MutationObserver(decorate).observe(view, { childList: true, subtree: true });
+  decorate();
+}
+
+function decorateResponsiveTables(root = document) {
+  root.querySelectorAll("table").forEach(table => {
+    const headers = Array.from(table.querySelectorAll("thead th")).map(th => th.textContent.trim());
+    if (!headers.length) return;
+    table.querySelectorAll("tbody tr").forEach(row => {
+      Array.from(row.children).forEach((cell, index) => {
+        if (cell.tagName === "TD" && !cell.dataset.label) cell.dataset.label = headers[index] || "";
+      });
+    });
   });
 }
 
@@ -605,7 +627,11 @@ function bindAuth() {
     if (needsPassword && user.password_hash !== await hashPassword(fd.password)) return toast("Password salah.", "error");
     if (!canLoginAsRole(user, effectiveRole)) return toast(`Akun ini terdaftar sebagai ${roles[user.role]}. Pilih role yang sesuai.`, "error");
     state.page = landingPageForRole(effectiveRole);
-    saveSession({ userId: user.id, role: effectiveRole });
+    saveSession({
+      userId: user.id,
+      role: effectiveRole,
+      quoteSeed: effectiveRole === "siswa" ? uid("quote") : ""
+    });
     showApp();
   });
 }
@@ -1287,7 +1313,7 @@ function renderDashboard() {
       <article class="session-hero">
         <span>Active Session</span>
         <h2>${activeSession ? `${refName("subjects")(activeSession.subject_id)} - Kelas ${refName("classes")(activeSession.class_id)}` : "Belum Ada Sesi Aktif"}</h2>
-        <div><b>♙</b> ${activeSession ? refName("teachers")(activeSession.teacher_id) : "Pilih jadwal"} <b>◷</b> ${activeSession ? `${activeSession.start_time} - ${activeSession.end_time}` : "Buka sesi absensi"}</div>
+        <div><b>Guru</b> ${activeSession ? refName("teachers")(activeSession.teacher_id) : "Pilih jadwal"} <b>Jam</b> ${activeSession ? `${activeSession.start_time} - ${activeSession.end_time}` : "Buka sesi absensi"}</div>
       </article>
       <article class="total-card">
         <span>Total Students</span>
@@ -1333,7 +1359,7 @@ function renderStudentDashboard() {
   byId("view").innerHTML = `
     <section class="student-quote-card">
       <span class="quote-label">Quote of the Day</span>
-      <p>"${escapeHtml(dailyStudentMessage(student))}"</p>
+      <p>"${escapeHtml(studentLoginMessage(student))}"</p>
       <small><i></i> Al-Hikmah Attendance</small>
       <b aria-hidden="true">"</b>
     </section>
@@ -1413,27 +1439,85 @@ function studentClassForSelectedYear(student) {
   return history ? findById("classes", history.class_id) : null;
 }
 
-function dailyStudentMessage(student) {
-  const messages = [
-    "Buku tidak akan terbuka sendiri, jadi mari bantu dia sedikit hari ini.",
-    "Nilai bagus jarang datang karena kasihan, biasanya karena belajar.",
-    "Datang tepat waktu itu gratis, tapi efeknya mahal untuk masa depan.",
-    "Otak juga butuh pemanasan, bukan cuma jempol saat scroll.",
-    "Tugas tidak akan mengerjakan dirinya sendiri, sayangnya begitu.",
-    "Belajar sebentar tetap lebih keren daripada menyesal satu semester.",
-    "Kalau belum paham, itu tanda belajar dimulai, bukan tanda menyerah.",
-    "Hari ini boleh santai, asal ilmunya tetap masuk.",
-    "Absensi hadir dulu, prestasi menyusul kalau usahanya tidak kabur.",
-    "Masa depan tidak bisa di-scan QR, tapi bisa disiapkan dari kelas ini.",
-    "Pelajaran hari ini mungkin terlihat kecil, sampai keluar di ujian.",
-    "Kalau malas datang, ingat nilai tidak bisa naik karena niat saja.",
-    "Satu halaman dibaca hari ini lebih berguna daripada seribu alasan.",
-    "Pintar itu proses, bukan fitur bawaan yang bisa diaktifkan mendadak."
+function studentLoginMessage(student) {
+  const starts = [
+    "Kalau malas datang",
+    "Kalau buku masih tertutup",
+    "Kalau catatan masih kosong",
+    "Kalau niat belajar cuma jadi hiasan",
+    "Kalau tugas mulai menatap balik",
+    "Kalau otak masih mode hemat daya",
+    "Kalau kelas terasa berat",
+    "Kalau PR terasa seperti legenda",
+    "Kalau semangat belum bangun",
+    "Kalau fokus sedang kabur",
+    "Kalau jadwal terlihat padat",
+    "Kalau ujian terasa jauh",
+    "Kalau nilai ingin naik",
+    "Kalau guru sudah menjelaskan",
+    "Kalau absensi sudah hadir",
+    "Kalau masa depan belum punya peta",
+    "Kalau satu halaman terasa banyak",
+    "Kalau rumus terasa asing",
+    "Kalau hafalan mulai menguap",
+    "Kalau belajar terasa sepi"
   ];
-  const key = `${today()}-${student.id}`;
-  let hash = 0;
-  for (const ch of key) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  return messages[hash % messages.length];
+  const middles = [
+    "ingat nilai tidak naik karena kasihan",
+    "ingat paham itu hasil berantem sehat dengan materi",
+    "ingat scroll cepat tidak otomatis membuat otak cepat",
+    "ingat ujian suka menagih yang dulu diremehkan",
+    "ingat menunda itu cicilan panik",
+    "ingat hadir saja belum cukup kalau pikiran parkir di luar",
+    "ingat guru bukan mesin pengulang tanpa batas",
+    "ingat catatan rapi lebih berguna daripada alasan rapi",
+    "ingat masa depan jarang percaya janji kosong",
+    "ingat satu konsep kecil bisa menyelamatkan satu soal besar",
+    "ingat kelas bukan tempat numpang sinyal saja",
+    "ingat belajar lima belas menit tetap lebih nyata dari niat dua jam",
+    "ingat malas itu kreatif mencari alasan",
+    "ingat nilai bagus punya hubungan dekat dengan latihan",
+    "ingat ponsel bisa dicas, semangat juga bisa dipaksa mulai",
+    "ingat tidak paham itu normal, tidak mencoba itu masalah",
+    "ingat pelajaran kecil sering menyamar jadi soal besar",
+    "ingat disiplin itu tabungan yang tidak kelihatan dulu",
+    "ingat bertanya itu lebih murah daripada remedial",
+    "ingat otak perlu bukti, bukan pidato motivasi"
+  ];
+  const endings = [
+    "jadi buka bukunya sebelum drama dimulai.",
+    "jadi catat dulu, panik belakangan tidak usah.",
+    "jadi dengarkan sebentar, masa depanmu ikut menunggu.",
+    "jadi mulai dari satu soal, bukan satu alasan.",
+    "jadi hadirkan kepala, bukan cuma nama di absensi.",
+    "jadi rapikan fokus sebelum pelajaran merapikanmu.",
+    "jadi kerjakan yang bisa, lalu kejar yang belum.",
+    "jadi gunakan hari ini sebelum jadi penyesalan besok.",
+    "jadi jangan cuma siap ketika sudah terlambat.",
+    "jadi buktikan niatmu punya tenaga.",
+    "jadi simpan malasnya untuk libur resmi.",
+    "jadi belajar dulu, gaya boleh menyusul.",
+    "jadi jangan tunggu pintar untuk mulai belajar.",
+    "jadi jadikan kelas ini investasi kecil.",
+    "jadi kalau bingung, tanya sebelum tersesat jauh.",
+    "jadi biarkan usahamu lebih lantang dari keluhan.",
+    "jadi jangan berharap QR men-scan prestasi.",
+    "jadi beri otak pekerjaan yang layak.",
+    "jadi ambil poin kecil yang tersedia hari ini.",
+    "jadi pulanglah dengan satu hal baru, minimal."
+  ];
+  const seed = state.session?.quoteSeed || `${today()}-${student.id}`;
+  const hash = hashText(`${seed}-${student.id}-${student.nisn || ""}`);
+  return `${starts[hash % starts.length]}, ${middles[Math.floor(hash / starts.length) % middles.length]}, ${endings[Math.floor(hash / (starts.length * middles.length)) % endings.length]}`;
+}
+
+function hashText(text) {
+  let hash = 2166136261;
+  for (const ch of String(text || "")) {
+    hash ^= ch.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
 
 function showMyQr() {

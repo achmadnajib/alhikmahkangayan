@@ -191,7 +191,7 @@ const schemas = {
   }
 };
 
-const state = { db: null, session: null, page: "dashboard", filters: {}, selectedAcademicYearId: "", videoStream: null, remoteDb: false, saveTimer: null, notificationTimer: null };
+const state = { db: null, session: null, page: "dashboard", filters: {}, selectedAcademicYearId: "", videoStream: null, remoteDb: false, saveTimer: null, notificationTimer: null, modalHistoryOpen: false };
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -696,6 +696,7 @@ function canLoginAsRole(user, role) {
 function bindShell() {
   byId("logout").onclick = logoutApp;
   byId("menu-toggle").onclick = () => document.querySelector(".sidebar").classList.toggle("open");
+  window.addEventListener("popstate", handleAppBack);
   let lastMobileState = isMobileViewport();
   window.addEventListener("resize", () => {
     const nextMobileState = isMobileViewport();
@@ -705,10 +706,23 @@ function bindShell() {
   });
 }
 
+function handleAppBack(event) {
+  if (byId("modal-backdrop")) {
+    closeModal({ fromPopState: true });
+    return;
+  }
+  const targetPage = event.state?.page;
+  if (state.session && targetPage && targetPage !== state.page) {
+    state.page = targetPage;
+    renderMenu();
+    navigate(targetPage, { replaceHistory: true });
+  }
+}
+
 function logoutApp() {
   localStorage.removeItem(SESSION_KEY);
   stopCamera();
-  closeModal();
+  closeModal({ fromPopState: true });
   if (state.notificationTimer) clearInterval(state.notificationTimer);
   state.notificationTimer = null;
   state.session = null;
@@ -741,7 +755,15 @@ function showApp() {
   updateMobileSchoolBar();
   renderMenu();
   startNotificationEngine();
-  navigate(state.page);
+  primeAppHistory();
+  navigate(state.page, { replaceHistory: true });
+}
+
+function primeAppHistory() {
+  if (!state.session || !history.replaceState || !history.pushState) return;
+  const appState = { app: "alhikmah", page: state.page };
+  history.replaceState(appState, "", location.href);
+  if (history.state?.app === "alhikmah" && !history.state.modal) history.pushState(appState, "", location.href);
 }
 
 function applySchoolBrand() {
@@ -1092,12 +1114,13 @@ function canAccessPeriodChild(page) {
   return canEditMaster() && ["academic_years", "semesters", "lesson_hours", "holidays"].includes(page);
 }
 
-function navigate(page) {
+function navigate(page, options = {}) {
   stopCamera();
   if (page === "my_qr") return showMyQr();
   if (page === "mobile_settings") return renderMobileSettingsHub();
   if (!canAccess(page) && !canAccessPeriodChild(page)) page = landingPageForRole(currentUser().role);
   state.page = page;
+  if (!options.replaceHistory) pushAppHistory(page);
   document.querySelector(".sidebar").classList.remove("open");
   renderMenu();
   const titles = { dashboard: "Dashboard", attendance: "Scan", history: "History", subjects: "Mapel & Jadwal", reports: "Reports", users: "Pengguna & Role", profile: "Profile", periods: "Periode Akademik", audit_logs: "Audit Sistem" };
@@ -1117,6 +1140,13 @@ function navigate(page) {
   if (page === "users") return renderUsers();
   if (page === "profile") return renderProfile();
   return renderCrud(page);
+}
+
+function pushAppHistory(page) {
+  if (!state.session || !history.pushState) return;
+  const current = history.state || {};
+  if (current.app === "alhikmah" && current.page === page && !current.modal) return;
+  history.pushState({ app: "alhikmah", page }, "", location.href);
 }
 
 function renderMobileSettingsHub() {
@@ -3267,17 +3297,29 @@ function exportAttendanceMatrixCsv() {
 
 function exportAttendanceMatrixExcel() {
   const report = attendanceMatrixReport();
-  const html = `<!doctype html><html><head><meta charset="utf-8"><style>
-    body{font-family:Arial,sans-serif}
-    table{border-collapse:collapse;font-size:11px}
-    th,td{border:1px solid #000;padding:3px 5px;vertical-align:middle}
-    th{text-align:center;font-weight:bold}
-    .center{text-align:center}
-    .student-name{min-width:150px}
-    .title{font-weight:bold;text-align:center;font-size:14px}
-    .meta td{border:0;padding:5px}
-  </style></head><body>${attendanceMatrixHtml(report)}</body></html>`;
-  downloadBlob(`absensi_siswa_${today()}.xls`, html, "application/vnd.ms-excel");
+  const rows = [
+    ["ABSENSI SISWA"],
+    [report.setting.school_name || "Nama Sekolah"],
+    [`Kelas: ${displayName("classes", report.class) || "-"}`, "", "", `Mata Pelajaran: ${displayName("subjects", report.subject) || "Semua Mapel"}`],
+    ["No", "NIS", "NISN", "Nama Siswa", ...Array.from({ length: 31 }, (_, i) => String(i + 1)), "S", "I", "A"],
+    ["", "", "", "Tanggal", ...Array.from({ length: 31 }, (_, i) => shortDate(report.sessions[i]?.date || "")), "", "", ""],
+    ...report.rows.map(row => [
+      row.index,
+      row.student.nis || "",
+      row.student.nisn || "",
+      row.student.name || "",
+      ...Array.from({ length: 31 }, (_, i) => row.cells[i] || ""),
+      row.totals.sakit,
+      row.totals.izin,
+      row.totals.alfa
+    ]),
+    [],
+    [`Keterangan: H = Hadir, T = Terlambat, S = Sakit, I = Izin, A = Alfa. Tanggal cetak: ${today()}.`],
+    [],
+    ["Guru Mata Pelajaran", "", "", "Kepala Sekolah"],
+    [report.teacher?.name || "(________________)", "", "", report.setting.headmaster_name || "(________________)"]
+  ];
+  downloadXlsx(`absensi_siswa_${today()}.xlsx`, "Absensi Siswa", rows);
 }
 
 function shortDate(date) {
@@ -3288,10 +3330,158 @@ function shortDate(date) {
 
 function downloadBlob(filename, content, type) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([content], { type }));
+  const blob = content instanceof Blob ? content : new Blob([content], { type });
+  a.href = URL.createObjectURL(blob);
   a.download = filename;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+function downloadXlsx(filename, sheetName, rows) {
+  downloadBlob(filename, createXlsxBlob(sheetName, rows), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+}
+
+function createXlsxBlob(sheetName, rows) {
+  const files = {
+    "[Content_Types].xml": `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>`,
+    "_rels/.rels": `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`,
+    "xl/workbook.xml": `<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="${xmlEscape(String(sheetName || "Sheet1").slice(0, 31) || "Sheet1")}" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`,
+    "xl/_rels/workbook.xml.rels": `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`,
+    "xl/worksheets/sheet1.xml": worksheetXml(rows)
+  };
+  return new Blob([zipStore(files)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+
+function worksheetXml(rows) {
+  const safeRows = rows.length ? rows : [["Belum ada data"]];
+  const sheetRows = safeRows.map((row, rowIndex) => {
+    const cells = row.map((value, colIndex) => {
+      const ref = `${xlsxColumnName(colIndex + 1)}${rowIndex + 1}`;
+      return `<c r="${ref}" t="inlineStr"><is><t>${xmlEscape(value ?? "")}</t></is></c>`;
+    }).join("");
+    return `<row r="${rowIndex + 1}">${cells}</row>`;
+  }).join("");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>${sheetRows}</sheetData>
+</worksheet>`;
+}
+
+function xlsxColumnName(index) {
+  let name = "";
+  while (index > 0) {
+    const mod = (index - 1) % 26;
+    name = String.fromCharCode(65 + mod) + name;
+    index = Math.floor((index - mod) / 26);
+  }
+  return name;
+}
+
+function xmlEscape(value) {
+  return String(value ?? "").replace(/[<>&"']/g, char => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" }[char]));
+}
+
+function zipStore(files) {
+  const encoder = new TextEncoder();
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  Object.entries(files).forEach(([name, content]) => {
+    const nameBytes = encoder.encode(name);
+    const data = encoder.encode(content);
+    const crc = crc32(data);
+    const local = zipLocalHeader(nameBytes, data.length, crc);
+    localParts.push(local, data);
+    centralParts.push(zipCentralHeader(nameBytes, data.length, crc, offset));
+    offset += local.length + data.length;
+  });
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const end = zipEndRecord(Object.keys(files).length, centralSize, offset);
+  return concatBytes([...localParts, ...centralParts, end]);
+}
+
+function zipLocalHeader(nameBytes, size, crc) {
+  const out = new Uint8Array(30 + nameBytes.length);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, 0x04034b50, true);
+  view.setUint16(4, 20, true);
+  view.setUint16(6, 0x0800, true);
+  view.setUint16(8, 0, true);
+  view.setUint16(10, 0, true);
+  view.setUint16(12, 0, true);
+  view.setUint32(14, crc, true);
+  view.setUint32(18, size, true);
+  view.setUint32(22, size, true);
+  view.setUint16(26, nameBytes.length, true);
+  out.set(nameBytes, 30);
+  return out;
+}
+
+function zipCentralHeader(nameBytes, size, crc, offset) {
+  const out = new Uint8Array(46 + nameBytes.length);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, 0x02014b50, true);
+  view.setUint16(4, 20, true);
+  view.setUint16(6, 20, true);
+  view.setUint16(8, 0x0800, true);
+  view.setUint16(10, 0, true);
+  view.setUint16(12, 0, true);
+  view.setUint16(14, 0, true);
+  view.setUint32(16, crc, true);
+  view.setUint32(20, size, true);
+  view.setUint32(24, size, true);
+  view.setUint16(28, nameBytes.length, true);
+  view.setUint32(42, offset, true);
+  out.set(nameBytes, 46);
+  return out;
+}
+
+function zipEndRecord(count, centralSize, centralOffset) {
+  const out = new Uint8Array(22);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, 0x06054b50, true);
+  view.setUint16(8, count, true);
+  view.setUint16(10, count, true);
+  view.setUint32(12, centralSize, true);
+  view.setUint32(16, centralOffset, true);
+  return out;
+}
+
+function concatBytes(parts) {
+  const total = parts.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(total);
+  let cursor = 0;
+  parts.forEach(part => {
+    out.set(part, cursor);
+    cursor += part.length;
+  });
+  return out;
+}
+
+function crc32(bytes) {
+  const table = crc32.table || (crc32.table = Array.from({ length: 256 }, (_, index) => {
+    let value = index;
+    for (let bit = 0; bit < 8; bit++) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+    return value >>> 0;
+  }));
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function renderUsers() {
@@ -4104,25 +4294,13 @@ function exportExcel(name, rows, type = "") {
   const prepared = prepareExportRows(name, rows, type);
   const keys = exportKeys(prepared);
   const title = exportTitle(name, type);
-  const html = `
-    <html><head><meta charset="utf-8"><style>
-      table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:12px}
-      th{background:#dbeafe;font-weight:bold;text-align:center}
-      th,td{border:1px solid #94a3b8;padding:6px 8px;vertical-align:middle}
-      .title{font-size:16px;font-weight:bold;text-align:center;background:#fff}
-      .meta{font-weight:bold;background:#f8fafc}
-    </style></head><body>
-    <table>
-      <tr><td class="title" colspan="${Math.max(keys.length, 1)}">${escapeHtml(title)}</td></tr>
-      <tr><td class="meta" colspan="${Math.max(keys.length, 1)}">Tanggal Cetak: ${today()}</td></tr>
-      <tr>${keys.map(k => `<th>${escapeHtml(k)}</th>`).join("")}</tr>
-      ${prepared.map(r => `<tr>${keys.map(k => `<td>${escapeHtml(r[k] ?? "")}</td>`).join("")}</tr>`).join("")}
-    </table></body></html>`;
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([html], { type: "application/vnd.ms-excel" }));
-  a.download = `${name}_${today()}.xls`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  const worksheetRows = [
+    [title],
+    [`Tanggal Cetak: ${today()}`],
+    keys,
+    ...prepared.map(row => keys.map(key => row[key] ?? ""))
+  ];
+  downloadXlsx(`${name}_${today()}.xlsx`, title.slice(0, 31), worksheetRows);
 }
 
 function prepareExportRows(name, rows, type) {
@@ -4508,17 +4686,29 @@ function emptyRow(cols) { return `<tr><td colspan="${cols}" class="muted">Belum 
 function escapeHtml(v) { return String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function csvCell(v) { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s; }
 function modal(title, body) {
-  closeModal();
+  closeModal({ fromPopState: true });
   const el = document.createElement("div");
   el.className = "modal-backdrop";
   el.id = "modal-backdrop";
-  el.innerHTML = `<section class="modal"><div class="modal-head"><h2>${escapeHtml(title)}</h2><button class="icon-btn" data-close aria-label="Tutup">×</button></div>${body}</section>`;
+  el.innerHTML = `<section class="modal"><div class="modal-head"><h2>${escapeHtml(title)}</h2><button class="icon-btn" data-close aria-label="Tutup">&times;</button></div>${body}</section>`;
   document.body.appendChild(el);
+  if (history.pushState && state.session) {
+    history.pushState({ app: "alhikmah", page: state.page, modal: true }, "", location.href);
+    state.modalHistoryOpen = true;
+  }
   el.querySelectorAll("[data-close]").forEach(b => b.onclick = closeModal);
+  decorateResponsiveTables(el);
 }
-function closeModal() {
+function closeModal(options = {}) {
   stopCamera();
+  const hadModal = !!byId("modal-backdrop");
   byId("modal-backdrop")?.remove();
+  if (hadModal && state.modalHistoryOpen && !options.fromPopState && history.back) {
+    state.modalHistoryOpen = false;
+    history.back();
+    return;
+  }
+  if (hadModal && options.fromPopState) state.modalHistoryOpen = false;
 }
 function toast(msg, type = "ok") {
   const t = byId("toast");

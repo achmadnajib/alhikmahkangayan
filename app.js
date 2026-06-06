@@ -1041,6 +1041,8 @@ function iconForPage(page) {
     users: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 9a7 7 0 0 1 14 0",
     settings: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v3M12 18v3M4.9 4.9 7 7M17 17l2.1 2.1M3 12h3M18 12h3M4.9 19.1 7 17M17 7l2.1-2.1",
     profile: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-6 9a6 6 0 0 1 12 0",
+    classes: "M4 5h16v14H4V5Zm4 0v14M4 10h16",
+    logout: "M10 6H5v12h5M14 8l4 4-4 4M8 12h10",
     mobile_settings: "M4 6h16M4 12h16M4 18h16"
   };
   const path = icons[page] || icons.dashboard;
@@ -1116,6 +1118,7 @@ function canAccessPeriodChild(page) {
 
 function navigate(page, options = {}) {
   stopCamera();
+  if (page !== "my_qr" && byId("modal-backdrop")) closeModal({ fromPopState: true });
   if (page === "my_qr") return showMyQr();
   if (page === "mobile_settings") return renderMobileSettingsHub();
   if (!canAccess(page) && !canAccessPeriodChild(page)) page = landingPageForRole(currentUser().role);
@@ -1162,9 +1165,8 @@ function renderMobileSettingsHub() {
     .filter(([id]) => !bottomIds.has(id) && id !== "my_qr");
   const cards = extraItems.map(([id, label]) => `
     <button class="menu-hub-card" data-menu-hub="${id}">
-      <span>${menuInitial(label)}</span>
-      <strong>${label}</strong>
-      <small>Buka halaman ${label.toLowerCase()}</small>
+      <span class="menu-hub-icon">${iconForPage(id)}</span>
+      <span class="menu-hub-copy"><strong>${label}</strong><small>Buka halaman ${label.toLowerCase()}</small></span>
     </button>`).join("");
   byId("view").innerHTML = `
     <section class="panel menu-hub-panel">
@@ -1178,9 +1180,8 @@ function renderMobileSettingsHub() {
       <div class="menu-hub-grid">
         ${cards || `<p class="muted">Tidak ada menu tambahan untuk role ini.</p>`}
         <button class="menu-hub-card danger" data-menu-logout>
-          <span>K</span>
-          <strong>Keluar</strong>
-          <small>Kembali ke halaman login</small>
+          <span class="menu-hub-icon">${iconForPage("logout")}</span>
+          <span class="menu-hub-copy"><strong>Keluar</strong><small>Kembali ke halaman login</small></span>
         </button>
       </div>
     </section>`;
@@ -3012,6 +3013,7 @@ function renderReports() {
   const user = currentUser();
   const hideTeacherStudentFilters = ["guru", "wali_kelas"].includes(user.role);
   const hideClassFilter = user.role === "wali_kelas";
+  const showUnitFilter = ["super_admin", "kepala_sekolah"].includes(user.role);
   const selectedMonth = state.filters.reportMonth || currentMonthValue();
   const reportFilters = reportFilterValues();
   byId("view").innerHTML = `
@@ -3022,6 +3024,7 @@ function renderReports() {
         <div class="report-auto-semester">Semester otomatis: <strong id="report-auto-semester">${escapeHtml(reportSemesterName(selectedMonth))}</strong></div>
         <div class="filters report-filters">
         ${reportMonthSelect(selectedMonth)}
+        ${showUnitFilter ? reportUnitSelect() : ""}
         ${hideClassFilter ? "" : reportFilterSelect("class_id", "Kelas", "classes")}
         ${hideTeacherStudentFilters ? "" : reportFilterSelect("student_id", "Siswa", "students")}
         ${reportFilterSelect("subject_id", "Mapel", "subjects")}
@@ -3033,6 +3036,10 @@ function renderReports() {
   byId("view").querySelectorAll("select,input").forEach(el => el.onchange = () => {
     if (el.id === "report-month") state.filters.reportMonth = el.value;
     else if (el.name) reportFilters[el.name] = el.value;
+    if (el.name === "unit") {
+      ["class_id", "student_id", "subject_id", "teacher_id"].forEach(key => delete reportFilters[key]);
+      return renderReports();
+    }
     if (["class_id", "subject_id", "teacher_id"].includes(el.name)) return renderReports();
     renderReportOutput();
   });
@@ -3142,6 +3149,11 @@ function reportSemesterName(month) {
 function filteredRecords() {
   const root = byId("view");
   let rows = scopedAttendanceRecords();
+  const selectedUnit = root.querySelector('[name="unit"]')?.value || reportFilterValues().unit || headmasterUnit();
+  if (selectedUnit) {
+    const unitClassIds = new Set(classesForSelectedYear().filter(cls => classUnit(cls) === selectedUnit).map(cls => cls.id));
+    rows = rows.filter(record => unitClassIds.has(record.class_id));
+  }
   ["academic_year_id", "class_id", "student_id", "subject_id", "teacher_id"].forEach(k => {
     const v = root.querySelector(`[name="${k}"]`)?.value;
     if (v) rows = rows.filter(r => r[k] === v);
@@ -4440,9 +4452,23 @@ function reportFilterValues() {
   return state.filters.reportFilters;
 }
 
+function reportUnitSelect() {
+  const filters = reportFilterValues();
+  const headUnit = headmasterUnit();
+  if (headUnit) filters.unit = headUnit;
+  const selected = filters.unit || "";
+  const options = educationUnitOptions().filter(([value]) => !headUnit || value === headUnit);
+  return `<select name="unit" aria-label="Unit lembaga"><option value="">Semua Unit</option>${options.map(([value, label]) => `<option value="${value}" ${selected === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select>`;
+}
+
 function reportFilterSelect(name, label, table) {
-  const selected = reportFilterValues()[name] || "";
+  const filters = reportFilterValues();
+  const selected = filters[name] || "";
   const rows = reportRowsForFilter(name, table);
+  if (selected && !rows.some(row => row.id === selected)) {
+    delete filters[name];
+    return reportFilterSelect(name, label, table);
+  }
   return `<select name="${name}"><option value="">${label}</option>${rows.map(r => `<option value="${r.id}" ${selected === r.id ? "selected" : ""}>${escapeHtml(table === "classes" ? classSimpleLabel(r) : displayName(table, r))}</option>`).join("")}</select>`;
 }
 
@@ -4450,18 +4476,25 @@ function reportRowsForFilter(name, table) {
   const filters = reportFilterValues();
   let schedules = schedulesForSelectedYear().filter(schedule => !schedule.deleted_at && schedule.active !== "false");
   const user = currentUser();
+  const unit = filters.unit || headmasterUnit();
   if (user.role === "guru") schedules = schedules.filter(schedule => schedule.teacher_id === user.teacher_id);
   if (user.role === "wali_kelas") {
     const classIds = new Set(state.db.classes.filter(cls => cls.homeroom_teacher_id === user.teacher_id).map(cls => cls.id));
     schedules = schedules.filter(schedule => classIds.has(schedule.class_id));
+  }
+  if (unit) {
+    const unitClassIds = new Set(classesForSelectedYear().filter(cls => classUnit(cls) === unit).map(cls => cls.id));
+    schedules = schedules.filter(schedule => unitClassIds.has(schedule.class_id));
   }
   if (filters.class_id && name !== "class_id") schedules = schedules.filter(schedule => schedule.class_id === filters.class_id);
   if (filters.subject_id && name !== "subject_id") schedules = schedules.filter(schedule => schedule.subject_id === filters.subject_id);
   if (filters.teacher_id && name !== "teacher_id") schedules = schedules.filter(schedule => schedule.teacher_id === filters.teacher_id);
   if (table === "classes") {
     const ids = new Set(schedules.map(schedule => schedule.class_id));
+    const shouldLimitBySchedule = filters.subject_id || filters.teacher_id;
     return classesForSelectedYear()
-      .filter(cls => ids.has(cls.id) || cls.id === filters.class_id)
+      .filter(cls => !unit || classUnit(cls) === unit)
+      .filter(cls => !shouldLimitBySchedule || ids.has(cls.id) || cls.id === filters.class_id)
       .sort((a, b) => classSimpleLabel(a).localeCompare(classSimpleLabel(b)));
   }
   if (table === "subjects") {
@@ -4473,7 +4506,12 @@ function reportRowsForFilter(name, table) {
     return state.db.teachers.filter(teacher => !teacher.deleted_at && ids.has(teacher.id)).sort((a, b) => displayName("teachers", a).localeCompare(displayName("teachers", b)));
   }
   if (table === "students") {
-    const classIds = filters.class_id ? new Set([filters.class_id]) : new Set(schedules.map(schedule => schedule.class_id));
+    const unitClassIds = new Set(classesForSelectedYear().filter(cls => !unit || classUnit(cls) === unit).map(cls => cls.id));
+    const scheduledClassIds = new Set(schedules.map(schedule => schedule.class_id));
+    const shouldLimitBySchedule = filters.subject_id || filters.teacher_id;
+    const classIds = filters.class_id
+      ? new Set([filters.class_id])
+      : shouldLimitBySchedule ? scheduledClassIds : unitClassIds;
     return visibleRows("students")
       .filter(student => classIds.has(student.active_class_id))
       .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));

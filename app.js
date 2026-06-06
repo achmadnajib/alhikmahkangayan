@@ -3,6 +3,7 @@ const SESSION_KEY = "alhikmah_session_v1";
 const YEAR_KEY = "alhikmah_selected_academic_year";
 const NOTIF_SENT_KEY = "alhikmah_notification_sent_v1";
 const HEADMASTER_UNIT_KEY = "alhikmah_headmaster_active_unit";
+const ACTIVE_UNIT_KEY = "alhikmah_active_unit";
 
 const roles = {
   super_admin: "Administrator",
@@ -56,10 +57,11 @@ const schemas = {
     title: "Guru",
     subtitle: "Data guru, akun login, dan status wali kelas.",
     fields: [
-      ["nip", "NIP", "text", false],
-      ["name", "Nama Guru", "text", true],
+      ["name", "Nama Lengkap", "text", true],
       ["phone", "Nomor HP", "text", false],
       ["staff_role", "Jabatan Login", "select", true, [["guru", "Guru"], ["wali_kelas", "Wali Kelas"], ["kepala_sekolah", "Kepala Sekolah"]]],
+      ["identity_type", "Jenis Identitas", "select", true, [["NIP", "NIP"], ["NUPTK", "NUPTK"], ["NIY", "NIY"], ["ID", "ID Internal"]]],
+      ["identity_number", "Nomor Identitas", "text", true],
       ["unit", "Unit Lembaga", "select", false, educationUnitOptions(true)],
       ["units", "Unit Akses Kepala Sekolah", "unit_access", false],
       ["address", "Alamat", "textarea", false],
@@ -67,7 +69,7 @@ const schemas = {
       ["login_enabled", "Akun Login", "select", true, [["true", "Aktif"], ["false", "Nonaktif"]]],
       ["is_homeroom", "Role Wali Kelas", "select", true, [["false", "Tidak"], ["true", "Ya"]]]
     ],
-    columns: [["nip", "NIP"], ["name", "Nama"], ["staff_role", "Jabatan", roleLabel], ["unit", "Unit"], ["units", "Unit Akses", headmasterUnitsText], ["phone", "HP"], ["active", "Status", boolText], ["is_homeroom", "Wali Kelas", boolText]]
+    columns: [["identity_number", "Nomor Identitas", teacherIdentityText], ["name", "Nama"], ["staff_role", "Jabatan", roleLabel], ["unit", "Unit"], ["units", "Unit Akses", headmasterUnitsText], ["phone", "HP"], ["active", "Status", boolText], ["is_homeroom", "Wali Kelas", boolText]]
   },
   classes: {
     title: "Kelas",
@@ -248,16 +250,11 @@ function classSimpleLabel(cls) {
 
 function headmasterUnit() {
   const user = currentUser?.();
-  if (user?.role !== "kepala_sekolah") return "";
-  const teacher = findById?.("teachers", user.teacher_id);
-  const units = headmasterUnits(teacher);
-  if (!units.length) return "";
-  const stored = localStorage.getItem(headmasterUnitStorageKey(user));
-  return units.includes(stored) ? stored : units[0];
+  return user?.role === "kepala_sekolah" ? activeUnit() : "";
 }
 
 function headmasterUnitStorageKey(user = currentUser?.()) {
-  return `${HEADMASTER_UNIT_KEY}_${user?.teacher_id || user?.id || "default"}`;
+  return activeUnitStorageKey(user, HEADMASTER_UNIT_KEY);
 }
 
 function headmasterUnits(teacher = null) {
@@ -277,8 +274,53 @@ function headmasterUnitsText(value, row) {
   return escapeHtml(units.join(", ") || row?.unit || "-");
 }
 
+function teacherIdentityText(value, row) {
+  return escapeHtml([row?.identity_type || "NIP", row?.identity_number || row?.nip || ""].filter(Boolean).join(" "));
+}
+
+function activeUnitStorageKey(user = currentUser?.(), prefix = ACTIVE_UNIT_KEY) {
+  return `${prefix}_${user?.role || "role"}_${user?.teacher_id || user?.student_id || user?.id || "default"}`;
+}
+
+function scheduleUnitsForTeacher(teacherId) {
+  const classById = new Map(state.db.classes.filter(cls => !cls.deleted_at).map(cls => [cls.id, cls]));
+  const valid = new Set(educationUnitOptions().map(([unit]) => unit));
+  return [...new Set(state.db.schedules
+    .filter(schedule => !schedule.deleted_at && schedule.active !== "false" && schedule.teacher_id === teacherId)
+    .map(schedule => classUnit(classById.get(schedule.class_id)))
+    .filter(unit => valid.has(unit)))];
+}
+
+function homeroomUnitsForTeacher(teacherId) {
+  const valid = new Set(educationUnitOptions().map(([unit]) => unit));
+  return [...new Set(state.db.classes
+    .filter(cls => !cls.deleted_at && cls.homeroom_teacher_id === teacherId)
+    .map(cls => classUnit(cls))
+    .filter(unit => valid.has(unit)))];
+}
+
+function accessUnitsForUser(user = currentUser?.()) {
+  if (!user) return [];
+  if (user.role === "kepala_sekolah") return headmasterUnits(findById("teachers", user.teacher_id));
+  if (user.role === "guru") return scheduleUnitsForTeacher(user.teacher_id);
+  if (user.role === "wali_kelas") return homeroomUnitsForTeacher(user.teacher_id);
+  if (user.role === "siswa") {
+    const student = findById("students", user.student_id);
+    const cls = student ? findById("classes", student.active_class_id) : null;
+    return cls ? [classUnit(cls)] : [];
+  }
+  return [];
+}
+
+function activeUnit(user = currentUser?.()) {
+  const units = accessUnitsForUser(user);
+  if (!units.length) return "";
+  const stored = localStorage.getItem(activeUnitStorageKey(user));
+  return units.includes(stored) ? stored : units[0];
+}
+
 function filterClassesForRole(classes) {
-  const unit = headmasterUnit();
+  const unit = activeUnit();
   return unit ? classes.filter(cls => classUnit(cls) === unit) : classes;
 }
 
@@ -379,9 +421,17 @@ function normalizeTeacherRoles(db) {
   db.teachers.forEach(teacher => {
     const linkedUser = db.users.find(user => user.teacher_id === teacher.id && ["guru", "wali_kelas", "kepala_sekolah"].includes(user.role));
     teacher.staff_role ||= linkedUser?.role || (teacher.is_homeroom === "true" ? "wali_kelas" : "guru");
+    teacher.identity_type ||= teacher.nip ? "NIP" : "ID";
+    teacher.identity_number ||= teacher.nip || "";
+    teacher.nip = teacher.identity_number || teacher.nip || "";
     teacher.units = normalizeUnitList(teacher.units || (teacher.staff_role === "kepala_sekolah" ? teacher.unit : ""));
     if (teacher.staff_role === "wali_kelas") teacher.is_homeroom = "true";
     if (teacher.staff_role === "kepala_sekolah") teacher.is_homeroom = "false";
+    db.users.filter(user => user.teacher_id === teacher.id).forEach(user => {
+      user.nip = teacher.identity_number || teacher.nip || user.nip || "";
+      user.identity_type = teacher.identity_type;
+      user.identity_number = teacher.identity_number || teacher.nip || user.identity_number || "";
+    });
   });
 }
 
@@ -671,9 +721,10 @@ function bindAuth() {
     e.preventDefault();
     const fd = formData(e.target);
     const user = findLoginUser(fd.role, fd.email);
-    const effectiveRole = user?.role === "super_admin" && fd.role === "kepala_sekolah" ? "super_admin" : fd.role;
+    const effectiveRole = user?.role === "super_admin" ? "super_admin" : fd.role === "guru" && user?.role === "wali_kelas" ? "wali_kelas" : fd.role;
     const needsPassword = loginNeedsPassword(effectiveRole);
-    if (!user || user.active === "false") return toast("Identitas login tidak valid.", "error");
+    if (!user) return toast("Data tidak ditemukan. Periksa kembali nomor identitas Anda.", "error");
+    if (user.active === "false") return toast("Akun Anda tidak aktif. Silakan hubungi admin sekolah.", "error");
     if (needsPassword && user.password_hash !== await hashPassword(fd.password)) return toast("Password salah.", "error");
     if (!canLoginAsRole(user, effectiveRole)) return toast(`Akun ini terdaftar sebagai ${roles[user.role]}. Pilih role yang sesuai.`, "error");
     state.page = landingPageForRole(effectiveRole);
@@ -692,21 +743,25 @@ function updateLoginIdentifierHint() {
   const input = byId("login-identifier");
   if (!label || !input) return;
   if (role === "siswa") {
-    label.textContent = "NISN";
-    input.placeholder = "Masukkan NISN siswa";
+    label.textContent = "NISN / NIS";
+    input.placeholder = "Masukkan NISN atau NIS";
     byId("login-password-field")?.classList.add("hidden");
     byId("login-password").required = false;
     byId("login-password").value = "";
+  } else if (role === "super_admin") {
+    label.textContent = "Username / Email Admin";
+    input.placeholder = "Masukkan username atau email admin";
+    byId("login-password-field")?.classList.remove("hidden");
+    byId("login-password").required = true;
   } else if (role === "kepala_sekolah") {
-    const adminMode = String(input.value || "").includes("@");
-    label.textContent = "NIP / Email Administrator";
-    input.placeholder = "Masukkan NIP kepala sekolah atau email administrator";
-    byId("login-password-field")?.classList.toggle("hidden", !adminMode);
-    byId("login-password").required = adminMode;
-    if (!adminMode) byId("login-password").value = "";
+    label.textContent = "NIP / NUPTK / NIY / ID";
+    input.placeholder = "Masukkan NIP, NUPTK, NIY, atau ID";
+    byId("login-password-field")?.classList.add("hidden");
+    byId("login-password").required = false;
+    byId("login-password").value = "";
   } else {
-    label.textContent = "NIP";
-    input.placeholder = "Masukkan NIP";
+    label.textContent = "NIP / NUPTK / NIY / ID";
+    input.placeholder = "Masukkan NIP, NUPTK, NIY, atau ID";
     byId("login-password-field")?.classList.add("hidden");
     byId("login-password").required = false;
     byId("login-password").value = "";
@@ -719,23 +774,35 @@ function loginNeedsPassword(role) {
 
 function findLoginUser(role, identifier) {
   const value = String(identifier || "").trim().toLowerCase();
+  if (role === "super_admin") {
+    return state.db.users.find(u =>
+      u.role === "super_admin" &&
+      !u.deleted_at &&
+      [u.email, u.username, u.name].some(item => String(item || "").toLowerCase() === value)
+    ) || null;
+  }
   if (role === "siswa") {
-    const student = state.db.students.find(s => s.nisn?.toLowerCase() === value && !s.deleted_at);
+    const student = state.db.students.find(s => !s.deleted_at && [s.nisn, s.nis].some(item => String(item || "").toLowerCase() === value));
     return student ? state.db.users.find(u => u.student_id === student.id) : null;
   }
   if (["guru", "wali_kelas", "kepala_sekolah"].includes(role)) {
     if (role === "kepala_sekolah" && value.includes("@")) {
-      return state.db.users.find(u => u.role === "super_admin" && u.email?.toLowerCase() === value);
+      return state.db.users.find(u => u.role === "super_admin" && u.email?.toLowerCase() === value) || null;
     }
-    const teacher = state.db.teachers.find(t => t.nip?.toLowerCase() === value && !t.deleted_at);
+    const teacher = state.db.teachers.find(t => teacherIdentityMatches(t, value) && !t.deleted_at);
     const linked = teacher ? state.db.users.find(u => u.teacher_id === teacher.id && u.role === role) : null;
     if (linked) return linked;
     if (role === "guru" && teacher) {
       return state.db.users.find(u => u.teacher_id === teacher.id && u.role === "wali_kelas") || null;
     }
-    if (role === "kepala_sekolah") return state.db.users.find(u => u.role === "kepala_sekolah" && (u.nip?.toLowerCase() === value || u.email?.toLowerCase() === value));
+    if (role === "kepala_sekolah") return state.db.users.find(u => u.role === "kepala_sekolah" && [u.nip, u.identity_number].some(item => String(item || "").toLowerCase() === value));
   }
   return null;
+}
+
+function teacherIdentityMatches(teacher, value) {
+  return [teacher.identity_number, teacher.nip, teacher.nuptk, teacher.niy, teacher.internal_id]
+    .some(item => String(item || "").trim().toLowerCase() === value);
 }
 
 function canLoginAsRole(user, role) {
@@ -1480,13 +1547,13 @@ function renderStudentDashboard() {
 
 function headmasterUnitSwitcher(mode = "desktop") {
   const user = currentUser();
-  if (user?.role !== "kepala_sekolah") return "";
-  const units = headmasterUnits();
-  if (units.length <= 1) return "";
-  const active = headmasterUnit();
+  if (!["kepala_sekolah", "guru", "wali_kelas"].includes(user?.role)) return "";
+  const units = accessUnitsForUser(user);
+  if (!units.length) return "";
+  const active = activeUnit(user);
   return `<label class="headmaster-unit-switcher ${mode === "mobile" ? "compact" : ""}">
     <span>Unit</span>
-    <select data-headmaster-unit-switch>${units.map(unit => `<option value="${unit}" ${unit === active ? "selected" : ""}>${unit}</option>`).join("")}</select>
+    <select data-headmaster-unit-switch ${units.length === 1 ? "disabled" : ""}>${units.map(unit => `<option value="${unit}" ${unit === active ? "selected" : ""}>${unit}</option>`).join("")}</select>
   </label>`;
 }
 
@@ -1494,7 +1561,8 @@ function bindHeadmasterUnitSwitcher(root = document) {
   root.querySelectorAll("[data-headmaster-unit-switch]").forEach(select => {
     select.onchange = () => {
       const user = currentUser();
-      localStorage.setItem(headmasterUnitStorageKey(user), select.value);
+      localStorage.setItem(activeUnitStorageKey(user), select.value);
+      if (user?.role === "kepala_sekolah") localStorage.setItem(headmasterUnitStorageKey(user), select.value);
       ["studentClassUnit", "subjectClassUnit", "leaveClassUnit"].forEach(key => state.filters[key] = "");
       if (state.filters.reportFilters) {
         state.filters.reportFilters.unit = select.value;
@@ -1947,7 +2015,7 @@ function recordsForSelectedYear(records = state.db.attendance_records) {
 function schedulesForSelectedYear(schedules = state.db.schedules) {
   const rows = schedules.filter(schedule => schedule.academic_year_id === selectedAcademicYearId());
   const classIds = new Set(classesForSelectedYear().map(cls => cls.id));
-  return headmasterUnit() ? rows.filter(schedule => classIds.has(schedule.class_id)) : rows;
+  return activeUnit() ? rows.filter(schedule => classIds.has(schedule.class_id)) : rows;
 }
 
 function renderCrud(table) {
@@ -1989,7 +2057,7 @@ function crudActionSelect(table) {
 
 function renderStudentClassOverview() {
   const q = state.filters.studentClassOverview || "";
-  const unitFilter = headmasterUnit() || state.filters.studentClassUnit || "";
+  const unitFilter = activeUnit() || state.filters.studentClassUnit || "";
   const levelFilter = normalizeClassLevelFilter(unitFilter, state.filters.studentClassLevel || "");
   let classes = visibleRows("classes");
   classes = filterClassListByUnitLevel(classes, unitFilter, levelFilter);
@@ -2090,7 +2158,7 @@ function bindStudentClassOverview() {
 
 function renderSubjectClassOverview() {
   const q = state.filters.subjectClassOverview || "";
-  const unitFilter = headmasterUnit() || state.filters.subjectClassUnit || "";
+  const unitFilter = activeUnit() || state.filters.subjectClassUnit || "";
   const levelFilter = normalizeClassLevelFilter(unitFilter, state.filters.subjectClassLevel || "");
   let classes = visibleRows("classes");
   classes = filterClassListByUnitLevel(classes, unitFilter, levelFilter);
@@ -2192,7 +2260,7 @@ function bindSubjectClassOverview() {
 
 function renderLeaveClassOverview() {
   const q = state.filters.leaveClassOverview || "";
-  const unitFilter = headmasterUnit() || state.filters.leaveClassUnit || "";
+  const unitFilter = activeUnit() || state.filters.leaveClassUnit || "";
   const levelFilter = normalizeClassLevelFilter(unitFilter, state.filters.leaveClassLevel || "");
   let classes = accessibleLeaveClasses();
   classes = filterClassListByUnitLevel(classes, unitFilter, levelFilter);
@@ -2258,7 +2326,7 @@ function filterClassListByUnitLevel(classes, unit, level) {
 }
 
 function unitLevelFilterControls(prefix, unitValue = "", levelValue = "") {
-  const lockedUnit = headmasterUnit();
+  const lockedUnit = activeUnit();
   const effectiveUnit = lockedUnit || unitValue;
   const unitOptions = lockedUnit ? educationUnitOptions().filter(([value]) => value === lockedUnit) : educationUnitOptions();
   const levelOptions = classLevelOptionsForUnit(effectiveUnit);
@@ -2333,24 +2401,32 @@ function bindCrud(table) {
 function visibleRows(table) {
   let rows = state.db[table].filter(r => !r.deleted_at);
   const user = currentUser();
+  const unit = activeUnit();
   rows = filterBySelectedAcademicYear(table, rows);
   if (table === "classes") rows = filterClassesForRole(rows);
-  if (table === "teachers" && user.role === "kepala_sekolah" && headmasterUnit()) {
-    rows = rows.filter(teacher => teacherMatchesHeadmasterUnit(teacher, headmasterUnit()));
+  if (table === "classes" && user.role === "guru") {
+    const classIds = new Set(state.db.schedules.filter(s => !s.deleted_at && s.teacher_id === user.teacher_id).map(s => s.class_id));
+    rows = rows.filter(cls => classIds.has(cls.id));
   }
-  if (table === "subjects" && user.role === "kepala_sekolah" && headmasterUnit()) {
+  if (table === "classes" && user.role === "wali_kelas") {
+    rows = rows.filter(cls => cls.homeroom_teacher_id === user.teacher_id);
+  }
+  if (table === "teachers" && user.role === "kepala_sekolah" && unit) {
+    rows = rows.filter(teacher => teacherMatchesHeadmasterUnit(teacher, unit));
+  }
+  if (table === "subjects" && ["kepala_sekolah", "guru", "wali_kelas"].includes(user.role) && unit) {
     const subjectIds = new Set(schedulesForSelectedYear().map(schedule => schedule.subject_id));
     rows = rows.filter(subject => subjectIds.has(subject.id));
   }
-  if (table === "schedules" && user.role === "kepala_sekolah" && headmasterUnit()) {
+  if (table === "schedules" && ["kepala_sekolah", "guru", "wali_kelas"].includes(user.role) && unit) {
     const classIds = new Set(classesForSelectedYear().map(c => c.id));
     rows = rows.filter(schedule => classIds.has(schedule.class_id));
   }
-  if (table === "students" && user.role === "kepala_sekolah" && headmasterUnit()) {
+  if (table === "students" && ["kepala_sekolah", "guru"].includes(user.role) && unit) {
     const classIds = new Set(classesForSelectedYear().map(c => c.id));
     rows = rows.filter(r => classIds.has(r.active_class_id));
   }
-  if (table === "leave_requests" && user.role === "kepala_sekolah" && headmasterUnit()) {
+  if (table === "leave_requests" && ["kepala_sekolah"].includes(user.role) && unit) {
     const classIds = new Set(classesForSelectedYear().map(c => c.id));
     rows = rows.filter(r => classIds.has(r.class_id));
   }
@@ -2424,6 +2500,12 @@ function fieldHtml([key, label, type, required, options], row, context = {}) {
   const rawValue = row?.[key] ?? ((key === "academic_year_id" || key === "active_academic_year_id") ? selectedAcademicYearId() : defaultValue(type));
   const value = escapeHtml(rawValue);
   const req = required ? "required" : "";
+  if (context.table === "students" && context.options?.returnClassId && ["active_class_id", "active_academic_year_id"].includes(key)) {
+    const cls = findById("classes", context.options.returnClassId);
+    const fixedValue = key === "active_class_id" ? cls?.id : cls?.academic_year_id;
+    const displayTable = key === "active_class_id" ? "classes" : "academic_years";
+    return `<label>${label}<input value="${escapeHtml(displayName(displayTable, findById(displayTable, fixedValue)) || fixedValue || "")}" disabled><input type="hidden" name="${key}" value="${escapeHtml(fixedValue || "")}"></label>`;
+  }
   if (context.table === "schedules" && context.options?.returnScheduleClassId && ["academic_year_id", "semester_id", "class_id"].includes(key)) {
     return `<input type="hidden" name="${key}" value="${value}">`;
   }
@@ -2444,7 +2526,7 @@ function fieldHtml([key, label, type, required, options], row, context = {}) {
   if (type === "unit_access") {
     const selected = new Set(String(rawValue || row?.unit || "").split(/[,\s|/]+/).map(unit => unit.trim().toUpperCase()).filter(Boolean));
     const unitOptions = currentUser()?.role === "kepala_sekolah"
-      ? educationUnitOptions().filter(([unit]) => headmasterUnits().includes(unit))
+      ? educationUnitOptions().filter(([unit]) => accessUnitsForUser().includes(unit))
       : educationUnitOptions();
     return `<fieldset class="wide unit-access-field"><legend>${escapeHtml(label)}</legend>
       <div class="unit-access-grid">
@@ -2469,13 +2551,13 @@ function fieldHtml([key, label, type, required, options], row, context = {}) {
     let rows = state.db[table].filter(r => !r.deleted_at);
     if (["classes", "semesters"].includes(table)) rows = filterBySelectedAcademicYear(table, rows);
     if (table === "students") rows = filterBySelectedAcademicYear("students", rows);
-    if (currentUser()?.role === "kepala_sekolah" && headmasterUnit()) {
+    if (["kepala_sekolah", "guru", "wali_kelas"].includes(currentUser()?.role) && activeUnit()) {
       if (table === "classes") rows = filterClassesForRole(rows);
       if (table === "students") {
         const classIds = new Set(classesForSelectedYear().map(cls => cls.id));
         rows = rows.filter(student => classIds.has(student.active_class_id));
       }
-      if (table === "teachers") rows = rows.filter(teacher => teacherMatchesHeadmasterUnit(teacher, headmasterUnit()));
+      if (table === "teachers" && currentUser()?.role === "kepala_sekolah") rows = rows.filter(teacher => teacherMatchesHeadmasterUnit(teacher, activeUnit()));
     }
     if (context.table === "leave_requests" && key === "student_id") {
       const classId = row?.class_id || context.options?.returnLeaveClassId;
@@ -2486,10 +2568,10 @@ function fieldHtml([key, label, type, required, options], row, context = {}) {
     }
     return `<label>${label}<select name="${key}" ${req}><option value="">Pilih...</option>${rows.map(r => `<option value="${r.id}" ${rawValue === r.id ? "selected" : ""}>${escapeHtml(table === "classes" ? classSimpleLabel(r) : displayName(table, r))}</option>`).join("")}</select></label>`;
   }
-  if (type === "select" && key === "unit" && currentUser()?.role === "kepala_sekolah" && headmasterUnit() && ["classes", "teachers"].includes(context.table)) {
-    const activeUnit = headmasterUnit();
-    const labelText = educationUnitOptions(true).find(([value]) => value === activeUnit)?.[1] || activeUnit;
-    return `<label>${label}<input value="${escapeHtml(labelText)}" disabled><input type="hidden" name="${key}" value="${escapeHtml(activeUnit)}"></label>`;
+  if (type === "select" && key === "unit" && currentUser()?.role === "kepala_sekolah" && activeUnit() && ["classes", "teachers"].includes(context.table)) {
+    const currentUnit = activeUnit();
+    const labelText = educationUnitOptions(true).find(([value]) => value === currentUnit)?.[1] || currentUnit;
+    return `<label>${label}<input value="${escapeHtml(labelText)}" disabled><input type="hidden" name="${key}" value="${escapeHtml(currentUnit)}"></label>`;
   }
   if (type === "select") return `<label>${label}<select name="${key}" ${req}>${options.map(([v, l]) => `<option value="${v}" ${String(row?.[key] ?? "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>`;
   return `<label>${label}<input name="${key}" type="${type}" value="${value}" ${req}></label>`;
@@ -2504,6 +2586,9 @@ function normalizeRecord(table, data, row) {
   if (table === "teachers") {
     data.login_enabled ||= "true";
     data.staff_role ||= data.is_homeroom === "true" ? "wali_kelas" : "guru";
+    data.identity_type ||= "NIP";
+    data.identity_number = String(data.identity_number || data.nip || "").trim();
+    data.nip = data.identity_number;
     data.units = normalizeUnitList(data.units || (data.staff_role === "kepala_sekolah" ? data.unit : ""));
     if (data.staff_role === "kepala_sekolah" && !data.units && data.unit) data.units = normalizeUnitList(data.unit);
     if (data.staff_role === "kepala_sekolah" && data.units) data.unit = data.units.split(",")[0] || data.unit || "";
@@ -2529,36 +2614,45 @@ function normalizeRecord(table, data, row) {
 
 function validateRecord(table, data, row) {
   if (table === "students") {
+    if (!data.nis && !data.nisn) return toast("Isi minimal salah satu: NIS atau NISN.", "error"), false;
     if (data.status === "aktif" && !findById("classes", data.active_class_id)) return toast("Kelas aktif wajib valid.", "error"), false;
     const cls = findById("classes", data.active_class_id);
     if (cls && data.active_academic_year_id !== cls.academic_year_id) return toast("Tahun ajaran siswa harus sama dengan kelas aktif.", "error"), false;
-    if (currentUser().role === "kepala_sekolah" && headmasterUnit() && (!cls || classUnit(cls) !== headmasterUnit())) return toast("Siswa hanya boleh disimpan pada unit aktif kepala sekolah.", "error"), false;
-    const duplicate = state.db.students.find(s => !s.deleted_at && s.nis === data.nis && s.id !== row?.id);
-    if (duplicate) return toast("NIS sudah digunakan.", "error"), false;
+    if (["kepala_sekolah", "guru", "wali_kelas"].includes(currentUser().role) && activeUnit() && (!cls || classUnit(cls) !== activeUnit())) return toast("Siswa hanya boleh disimpan pada unit aktif.", "error"), false;
+    const duplicateNisn = data.nisn ? state.db.students.find(s => !s.deleted_at && s.nisn === data.nisn && s.id !== row?.id) : null;
+    if (duplicateNisn) return toast("NISN sudah digunakan.", "error"), false;
+    const duplicateNis = data.nis && cls ? state.db.students.find(s => {
+      const otherClass = findById("classes", s.active_class_id);
+      return !s.deleted_at && s.nis === data.nis && s.id !== row?.id && otherClass && classUnit(otherClass) === classUnit(cls);
+    }) : null;
+    if (duplicateNis) return toast("NIS sudah digunakan pada unit yang sama.", "error"), false;
   }
   if (table === "classes") {
     const semester = findById("semesters", data.semester_id);
     if (semester && semester.academic_year_id !== data.academic_year_id) return toast("Semester harus sesuai dengan tahun ajaran kelas.", "error"), false;
-    if (currentUser().role === "kepala_sekolah" && headmasterUnit() && data.unit !== headmasterUnit()) return toast("Kelas hanya boleh disimpan pada unit aktif kepala sekolah.", "error"), false;
+    if (currentUser().role === "kepala_sekolah" && activeUnit() && data.unit !== activeUnit()) return toast("Kelas hanya boleh disimpan pada unit aktif kepala sekolah.", "error"), false;
+    const duplicateClass = state.db.classes.find(cls => !cls.deleted_at && cls.id !== row?.id && cls.academic_year_id === data.academic_year_id && classUnit(cls) === data.unit && String(cls.name || "").toLowerCase() === String(data.name || "").toLowerCase());
+    if (duplicateClass) return toast("Nama kelas sudah digunakan pada unit dan tahun ajaran yang sama.", "error"), false;
   }
   if (table === "schedules") {
     if (!isActiveRef("teachers", data.teacher_id) || !isActiveRef("subjects", data.subject_id)) return toast("Guru dan mapel harus aktif.", "error"), false;
     const cls = findById("classes", data.class_id);
     if (cls && (data.academic_year_id !== cls.academic_year_id || data.semester_id !== cls.semester_id)) return toast("Tahun ajaran dan semester jadwal harus sama dengan kelas.", "error"), false;
-    if (currentUser().role === "kepala_sekolah" && headmasterUnit()) {
-      if (!cls || classUnit(cls) !== headmasterUnit()) return toast("Jadwal hanya boleh dibuat pada unit aktif kepala sekolah.", "error"), false;
+    if (currentUser().role === "kepala_sekolah" && activeUnit()) {
+      if (!cls || classUnit(cls) !== activeUnit()) return toast("Jadwal hanya boleh dibuat pada unit aktif kepala sekolah.", "error"), false;
       const teacher = findById("teachers", data.teacher_id);
-      if (!teacherMatchesHeadmasterUnit(teacher, headmasterUnit())) return toast("Guru tidak sesuai dengan unit aktif kepala sekolah.", "error"), false;
+      if (!teacherMatchesHeadmasterUnit(teacher, activeUnit())) return toast("Guru tidak sesuai dengan unit aktif kepala sekolah.", "error"), false;
     }
     if (!data.start_time || !data.end_time) return toast("Pilih jam pelajaran terlebih dahulu.", "error"), false;
     const conflict = scheduleConflict(data, row);
     if (conflict) return toast(conflict, "error"), false;
   }
   if (table === "teachers" && data.login_enabled === "true") {
-    const duplicateNip = state.db.teachers.find(t => !t.deleted_at && t.nip && t.nip === data.nip && t.id !== row?.id);
-    if (duplicateNip) return toast("NIP sudah digunakan.", "error"), false;
+    if (!data.identity_number) return toast("Nomor identitas wajib diisi.", "error"), false;
+    const duplicateNip = state.db.teachers.find(t => !t.deleted_at && teacherIdentityMatches(t, String(data.identity_number || "").toLowerCase()) && t.id !== row?.id);
+    if (duplicateNip) return toast("Nomor identitas sudah digunakan.", "error"), false;
   }
-  if (table === "teachers" && currentUser().role === "kepala_sekolah" && headmasterUnit()) {
+  if (table === "teachers" && currentUser().role === "kepala_sekolah" && activeUnit()) {
     const allowedUnits = new Set(headmasterUnits());
     const teacherUnits = normalizeUnitList(data.units || data.unit).split(",").filter(Boolean);
     if (data.unit && !allowedUnits.has(data.unit)) return toast("Guru hanya boleh disimpan pada unit kepala sekolah.", "error"), false;
@@ -2569,9 +2663,9 @@ function validateRecord(table, data, row) {
     if (!canCreateLeaveRequest(table)) return toast("Anda tidak memiliki akses membuat pengajuan izin.", "error"), false;
     if (data.student_id && data.class_id && !studentsInClass(data.class_id).some(student => student.id === data.student_id)) return toast("Siswa tidak terdaftar pada kelas izin tersebut.", "error"), false;
     if (data.status === "approved" && !canApproveLeaveFor(data.class_id)) return toast("Hanya Administrator atau wali kelas terkait yang bisa menyetujui izin.", "error"), false;
-    if (currentUser().role === "kepala_sekolah" && headmasterUnit()) {
+    if (currentUser().role === "kepala_sekolah" && activeUnit()) {
       const cls = findById("classes", data.class_id);
-      if (!cls || classUnit(cls) !== headmasterUnit()) return toast("Izin hanya boleh dikelola pada unit aktif kepala sekolah.", "error"), false;
+      if (!cls || classUnit(cls) !== activeUnit()) return toast("Izin hanya boleh dikelola pada unit aktif kepala sekolah.", "error"), false;
     }
     if (currentUser().role === "wali_kelas" && !canApproveLeaveFor(data.class_id)) return toast("Wali kelas hanya boleh mengelola izin kelas binaannya.", "error"), false;
     if (currentUser().role === "guru") {
@@ -2635,7 +2729,10 @@ async function syncTeacherUser(teacher) {
     linkKey: "teacher_id",
     linkId: teacher.id,
     name: teacher.name,
-    active: teacher.active
+    active: teacher.active,
+    identity_type: teacher.identity_type || "NIP",
+    identity_number: teacher.identity_number || teacher.nip || "",
+    nip: teacher.identity_number || teacher.nip || ""
   });
 }
 
@@ -2650,15 +2747,15 @@ async function syncStudentUser(student) {
   });
 }
 
-async function syncLinkedUser({ role, linkKey, linkId, name, active }) {
+async function syncLinkedUser({ role, linkKey, linkId, name, active, identity_type = "", identity_number = "", nip = "" }) {
   let user = state.db.users.find(u => u[linkKey] === linkId);
   const password = makePassword();
   if (user) {
-    Object.assign(user, { name, role, active, updated_at: now() });
+    Object.assign(user, { name, role, active, identity_type, identity_number, nip, updated_at: now() });
     delete user.email;
     return null;
   }
-  user = { id: uid("usr"), name, role, [linkKey]: linkId, active, password_hash: await hashPassword(password), created_at: now(), updated_at: now() };
+  user = { id: uid("usr"), name, role, [linkKey]: linkId, active, identity_type, identity_number, nip, password_hash: await hashPassword(password), created_at: now(), updated_at: now() };
   state.db.users.push(user);
   return { name, password, role };
 }
@@ -2848,15 +2945,16 @@ function historySubjectSelect(selected) {
 
 function scopedAttendanceRecords() {
   const user = currentUser();
-  const rows = recordsForSelectedYear();
+  let rows = recordsForSelectedYear();
+  const unit = activeUnit();
+  if (unit) {
+    const unitClassIds = new Set(classesForSelectedYear().filter(cls => classUnit(cls) === unit).map(cls => cls.id));
+    rows = rows.filter(r => unitClassIds.has(r.class_id));
+  }
   if (user.role === "siswa") return rows.filter(r => r.student_id === user.student_id);
   if (user.role === "guru") return rows.filter(r => r.teacher_id === user.teacher_id);
   if (user.role === "wali_kelas") {
     const classIds = new Set(state.db.classes.filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
-    return rows.filter(r => classIds.has(r.class_id));
-  }
-  if (user.role === "kepala_sekolah" && headmasterUnit()) {
-    const classIds = new Set(classesForSelectedYear().map(c => c.id));
     return rows.filter(r => classIds.has(r.class_id));
   }
   return rows.slice();
@@ -3291,7 +3389,7 @@ function reportSemesterName(month) {
 function filteredRecords() {
   const root = byId("view");
   let rows = scopedAttendanceRecords();
-  const selectedUnit = root.querySelector('[name="unit"]')?.value || reportFilterValues().unit || headmasterUnit();
+  const selectedUnit = root.querySelector('[name="unit"]')?.value || reportFilterValues().unit || activeUnit();
   if (selectedUnit) {
     const unitClassIds = new Set(classesForSelectedYear().filter(cls => classUnit(cls) === selectedUnit).map(cls => cls.id));
     rows = rows.filter(record => unitClassIds.has(record.class_id));
@@ -3771,8 +3869,7 @@ function openQrPrint() {
 }
 
 function classOptionList(selectedId = "") {
-  return state.db.classes
-    .filter(cls => !cls.deleted_at && cls.academic_year_id === selectedAcademicYearId())
+  return visibleRows("classes")
     .map(cls => `<option value="${cls.id}" ${cls.id === selectedId ? "selected" : ""}>${escapeHtml(classSimpleLabel(cls))}</option>`)
     .join("");
 }
@@ -3847,8 +3944,8 @@ function openSemesterPromotion(classId) {
 function openClassPromotion(classId) {
   const source = findById("classes", classId);
   if (!source) return toast("Kelas tidak ditemukan.", "error");
-  const options = state.db.classes
-    .filter(cls => !cls.deleted_at && cls.id !== source.id)
+  const options = visibleRows("classes")
+    .filter(cls => cls.id !== source.id)
     .map(cls => `<option value="${cls.id}">${escapeHtml(displayName("classes", cls))}</option>`)
     .join("");
   if (!options) return toast("Belum ada kelas tujuan. Buat kelas tujuan terlebih dahulu.", "error");
@@ -4605,10 +4702,10 @@ function reportFilterValues() {
 
 function reportUnitSelect() {
   const filters = reportFilterValues();
-  const headUnit = headmasterUnit();
-  if (headUnit) filters.unit = headUnit;
+  const roleUnit = activeUnit();
+  if (roleUnit) filters.unit = roleUnit;
   const selected = filters.unit || "";
-  const options = educationUnitOptions().filter(([value]) => !headUnit || value === headUnit);
+  const options = educationUnitOptions().filter(([value]) => !roleUnit || value === roleUnit);
   return `<select name="unit" aria-label="Unit lembaga"><option value="">Semua Unit</option>${options.map(([value, label]) => `<option value="${value}" ${selected === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select>`;
 }
 
@@ -4627,7 +4724,7 @@ function reportRowsForFilter(name, table) {
   const filters = reportFilterValues();
   let schedules = schedulesForSelectedYear().filter(schedule => !schedule.deleted_at && schedule.active !== "false");
   const user = currentUser();
-  const unit = filters.unit || headmasterUnit();
+  const unit = filters.unit || activeUnit();
   if (user.role === "guru") schedules = schedules.filter(schedule => schedule.teacher_id === user.teacher_id);
   if (user.role === "wali_kelas") {
     const classIds = new Set(state.db.classes.filter(cls => cls.homeroom_teacher_id === user.teacher_id).map(cls => cls.id));

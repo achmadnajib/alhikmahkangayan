@@ -4,13 +4,13 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Al Hikmah Attendance</title>
-    <link rel="stylesheet" href="styles.css?v=20260606-unit-level-sync" />
-    <link rel="stylesheet" href="mobile-nav.css?v=20260606-unit-level-sync" />
+    <link rel="stylesheet" href="styles.css?v=20260606-passwordless-units" />
+    <link rel="stylesheet" href="mobile-nav.css?v=20260606-passwordless-units" />
     <script
       src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"
       defer
     ></script>
-    <script src="app.js?v=20260606-unit-level-sync" defer></script>
+    <script src="app.js?v=20260606-passwordless-units" defer></script>
   </head>
   <body>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -39,9 +39,9 @@
           <label class="field-label"
             >Pilih Peran
             <select name="role" required>
-              <option value="guru">Guru</option>
-              <option value="wali_kelas">Wali Kelas</option>
-              <option value="kepala_sekolah">Kepala Sekolah</option>
+              <option value="super_admin">Admin</option>
+              <option value="kepala_sekolah">Kepala Sekolah / Kepala Unit</option>
+              <option value="guru">Guru / Wali Kelas</option>
               <option value="siswa">Siswa</option>
             </select>
           </label>

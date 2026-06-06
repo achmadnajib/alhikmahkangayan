@@ -124,6 +124,25 @@
     width: 24px !important;
     height: 24px !important;
   }
+
+  .mobile-school-bar {
+    gap: 8px !important;
+  }
+
+  .headmaster-unit-switcher.compact {
+    min-height: 34px !important;
+    padding: 5px 8px !important;
+    margin-left: auto !important;
+  }
+
+  .headmaster-unit-switcher.compact span {
+    display: none !important;
+  }
+
+  .headmaster-unit-switcher.compact select {
+    min-width: 54px !important;
+    font-size: 12px !important;
+  }
 }
 
 .student-quote-card {
@@ -164,6 +183,85 @@
 
 .student-secret-toggle:hover {
   background: #f4f4f2 !important;
+}
+
+.headmaster-unit-switcher {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  min-height: 38px !important;
+  padding: 6px 10px !important;
+  border: 1px solid #e3e0da !important;
+  border-radius: 999px !important;
+  background: #fff !important;
+  color: #171717 !important;
+  white-space: nowrap !important;
+}
+
+.headmaster-unit-switcher span {
+  color: #77716a !important;
+  font-size: 10px !important;
+  font-weight: 850 !important;
+  letter-spacing: .12em !important;
+  text-transform: uppercase !important;
+}
+
+.headmaster-unit-switcher select {
+  width: auto !important;
+  min-width: 58px !important;
+  height: auto !important;
+  min-height: 0 !important;
+  padding: 0 18px 0 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background-color: transparent !important;
+  color: #171717 !important;
+  font-size: 13px !important;
+  font-weight: 900 !important;
+  box-shadow: none !important;
+}
+
+.unit-access-field {
+  border: 1px solid #e3e0da !important;
+  border-radius: 16px !important;
+  padding: 12px !important;
+}
+
+.unit-access-field legend {
+  padding: 0 6px !important;
+  color: #77716a !important;
+  font-size: 11px !important;
+  font-weight: 850 !important;
+  letter-spacing: .08em !important;
+  text-transform: uppercase !important;
+}
+
+.unit-access-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)) !important;
+  gap: 8px !important;
+}
+
+.unit-access-grid label {
+  min-height: 42px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 8px 10px !important;
+  border: 1px solid #e3e0da !important;
+  border-radius: 12px !important;
+  background: #fff !important;
+  color: #171717 !important;
+  font-size: 13px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+.unit-access-grid input {
+  width: 16px !important;
+  height: 16px !important;
+  min-height: 16px !important;
 }
 
 .eye-icon {

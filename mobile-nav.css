@@ -436,6 +436,27 @@
   gap: 4px !important;
 }
 
+.menu-hub-card .menu-hub-copy,
+.menu-hub-card span.menu-hub-copy {
+  width: auto !important;
+  height: auto !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: grid !important;
+  place-items: start !important;
+  align-content: center !important;
+  justify-content: stretch !important;
+  gap: 4px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: #171717 !important;
+  box-shadow: none !important;
+  text-align: left !important;
+  overflow: visible !important;
+}
+
 .menu-hub-card strong {
   margin: 0 !important;
   font-size: 16px !important;

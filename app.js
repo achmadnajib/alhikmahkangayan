@@ -209,6 +209,20 @@ function classLevelOptions() {
   })];
 }
 
+function classLevelOptionsForUnit(unit = "") {
+  if (!unit) return classLevelOptions();
+  if (unit === "PAUD") return [["PAUD", "PAUD"]];
+  const range = unit === "MI" ? [1, 6] : unit === "SMP" ? [7, 9] : unit === "SMA" ? [10, 12] : [1, 12];
+  return Array.from({ length: range[1] - range[0] + 1 }, (_, index) => {
+    const level = String(range[0] + index);
+    return [level, `Kelas ${level}`];
+  });
+}
+
+function normalizeClassLevelFilter(unit, level) {
+  return classLevelOptionsForUnit(unit).some(([value]) => value === level) ? level : "";
+}
+
 function classUnit(cls = {}) {
   if (cls.unit) return cls.unit;
   const text = `${cls.level || ""} ${cls.name || ""} ${cls.major || ""}`.toLowerCase();
@@ -1975,8 +1989,8 @@ function crudActionSelect(table) {
 
 function renderStudentClassOverview() {
   const q = state.filters.studentClassOverview || "";
-  const unitFilter = state.filters.studentClassUnit || "";
-  const levelFilter = state.filters.studentClassLevel || "";
+  const unitFilter = headmasterUnit() || state.filters.studentClassUnit || "";
+  const levelFilter = normalizeClassLevelFilter(unitFilter, state.filters.studentClassLevel || "");
   let classes = visibleRows("classes");
   classes = filterClassListByUnitLevel(classes, unitFilter, levelFilter);
   if (q) classes = classes.filter(cls => JSON.stringify({
@@ -2076,8 +2090,8 @@ function bindStudentClassOverview() {
 
 function renderSubjectClassOverview() {
   const q = state.filters.subjectClassOverview || "";
-  const unitFilter = state.filters.subjectClassUnit || "";
-  const levelFilter = state.filters.subjectClassLevel || "";
+  const unitFilter = headmasterUnit() || state.filters.subjectClassUnit || "";
+  const levelFilter = normalizeClassLevelFilter(unitFilter, state.filters.subjectClassLevel || "");
   let classes = visibleRows("classes");
   classes = filterClassListByUnitLevel(classes, unitFilter, levelFilter);
   if (q) classes = classes.filter(cls => JSON.stringify({
@@ -2178,8 +2192,8 @@ function bindSubjectClassOverview() {
 
 function renderLeaveClassOverview() {
   const q = state.filters.leaveClassOverview || "";
-  const unitFilter = state.filters.leaveClassUnit || "";
-  const levelFilter = state.filters.leaveClassLevel || "";
+  const unitFilter = headmasterUnit() || state.filters.leaveClassUnit || "";
+  const levelFilter = normalizeClassLevelFilter(unitFilter, state.filters.leaveClassLevel || "");
   let classes = accessibleLeaveClasses();
   classes = filterClassListByUnitLevel(classes, unitFilter, levelFilter);
   if (q) classes = classes.filter(cls => JSON.stringify({
@@ -2244,14 +2258,19 @@ function filterClassListByUnitLevel(classes, unit, level) {
 }
 
 function unitLevelFilterControls(prefix, unitValue = "", levelValue = "") {
+  const lockedUnit = headmasterUnit();
+  const effectiveUnit = lockedUnit || unitValue;
+  const unitOptions = lockedUnit ? educationUnitOptions().filter(([value]) => value === lockedUnit) : educationUnitOptions();
+  const levelOptions = classLevelOptionsForUnit(effectiveUnit);
+  const selectedLevel = levelOptions.some(([value]) => value === levelValue) ? levelValue : "";
   return `
-    <select data-unit-filter="${prefix}" aria-label="Filter unit">
-      <option value="">Semua Unit</option>
-      ${educationUnitOptions().map(([value, label]) => `<option value="${value}" ${unitValue === value ? "selected" : ""}>${label}</option>`).join("")}
+    <select data-unit-filter="${prefix}" aria-label="Filter unit" ${lockedUnit ? "disabled" : ""}>
+      ${lockedUnit ? "" : `<option value="">Semua Unit</option>`}
+      ${unitOptions.map(([value, label]) => `<option value="${value}" ${effectiveUnit === value ? "selected" : ""}>${label}</option>`).join("")}
     </select>
     <select data-level-filter="${prefix}" aria-label="Filter tingkat">
       <option value="">Semua Tingkat</option>
-      ${classLevelOptions().map(([value, label]) => `<option value="${value}" ${levelValue === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}
+      ${levelOptions.map(([value, label]) => `<option value="${value}" ${selectedLevel === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}
     </select>`;
 }
 

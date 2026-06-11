@@ -20,7 +20,13 @@ const statusLabels = {
   terlambat: "Terlambat",
   izin: "Izin",
   sakit: "Sakit",
-  alfa: "Alfa"
+  alfa: "Alfa",
+  pending: "Menunggu",
+  approved: "Disetujui",
+  rejected: "Ditolak",
+  cancelled: "Dibatalkan",
+  open: "Terbuka",
+  closed: "Ditutup"
 };
 
 const tables = [
@@ -1669,6 +1675,7 @@ function renderParentDashboard() {
   if (!student) return logoutApp();
   const cls = studentClassForSelectedYear(student) || findById("classes", student.active_class_id);
   const todayRecord = latestStudentRecordForDate(student.id, today());
+  const todaySchedules = cls ? schedulesTodayForClass(cls.id) : [];
   const records = parentAttendanceRecords();
   const totals = attendanceTotals(records);
   const percent = totals.total ? (((totals.hadir + totals.terlambat) / totals.total) * 100).toFixed(1) : "0.0";
@@ -1680,13 +1687,21 @@ function renderParentDashboard() {
           <h2>${escapeHtml(student.name)}</h2>
           <p class="muted">${escapeHtml(displayName("classes", cls) || "-")} · NIS ${escapeHtml(student.nis || "-")}</p>
         </div>
-        <button class="ghost" data-inline-logout>Keluar</button>
       </div>
       <div class="summary-grid">
         ${card("Status Hari Ini", todayRecord ? badge(todayRecord.status) : "Belum ada data")}
         ${card("Jam Masuk", escapeHtml(todayRecord?.scan_time || "-"))}
         ${card("Jam Pulang", escapeHtml(todayRecord?.checkout_time || todayRecord?.end_time || "-"))}
         ${card("Keterangan", escapeHtml(todayRecord?.note || (todayRecord?.status === "terlambat" ? "Terlambat" : "-")))}
+      </div>
+    </section>
+    <section class="panel parent-message-panel">
+      <div class="panel-head"><div><span class="eyebrow">Pesan untuk Wali</span><h2>Terima kasih sudah ikut mengawasi kehadiran ananda.</h2><p class="muted">Perhatian kecil dari orang tua sangat membantu kedisiplinan anak di sekolah.</p></div></div>
+    </section>
+    <section class="panel parent-today-lessons">
+      <div class="panel-head"><div><h2>Pelajaran Hari Ini</h2><p class="muted">Status mengikuti jadwal pelajaran dan absensi anak hari ini.</p></div></div>
+      <div class="parent-lesson-list">
+        ${todaySchedules.map(schedule => parentLessonTodayCard(schedule, student.id)).join("") || `<div class="empty-state">Belum ada jadwal pelajaran hari ini.</div>`}
       </div>
     </section>
     <section class="cards">
@@ -1696,13 +1711,29 @@ function renderParentDashboard() {
       ${card("Alfa", totals.alfa)}
       ${card("Terlambat", totals.terlambat)}
       ${card("Kehadiran", `${percent}%`)}
-    </section>
-    <section class="panel">
-      <div class="panel-head"><div><h2>Pengajuan Terbaru</h2><p class="muted">Izin/sakit dari wali tidak mengubah absensi sebelum disetujui guru atau admin.</p></div><button class="primary" data-parent-add-leave>Ajukan Izin/Sakit</button></div>
-      ${parentLeaveTable()}
     </section>`;
-  bindProfileSummaryActions();
-  byId("view").querySelector("[data-parent-add-leave]")?.addEventListener("click", openParentLeaveForm);
+}
+
+function parentLessonTodayCard(schedule, studentId) {
+  const session = todaySessionForSchedule(schedule.id);
+  const record = session ? state.db.attendance_records.find(r => r.session_id === session.id && r.student_id === studentId) : null;
+  const status = record ? (statusLabels[record.status] || titleCase(record.status)) : parentScheduleStatusText(schedule, session);
+  const time = record?.scan_time || schedule.start_time || "-";
+  return `<article class="parent-lesson-card">
+    <div>
+      <strong>${escapeHtml(displayName("subjects", findById("subjects", schedule.subject_id)) || "-")}</strong>
+      <span>${escapeHtml(displayName("teachers", findById("teachers", schedule.teacher_id)) || "-")} · ${escapeHtml(schedule.start_time)} - ${escapeHtml(schedule.end_time)}</span>
+    </div>
+    <p><b>${escapeHtml(time)}</b><small>Status: ${escapeHtml(status)}</small></p>
+  </article>`;
+}
+
+function parentScheduleStatusText(schedule, session = null) {
+  const timing = scheduleTimingState(schedule);
+  if (timing === "future") return "Belum mulai";
+  if (timing === "active") return session ? "Belum absen" : "Sedang berlangsung";
+  if (timing === "past") return "Belum ada absensi";
+  return `Jadwal ${schedule.day}`;
 }
 
 function parentLeaveTable() {

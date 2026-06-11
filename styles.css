@@ -3901,6 +3901,58 @@ tr:hover td {
   font-size: 14px;
 }
 
+.parent-message-panel h2 {
+  max-width: 760px;
+}
+
+.parent-lesson-list {
+  display: grid;
+  gap: 10px;
+}
+
+.parent-lesson-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid #e3e0da;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.parent-lesson-card div,
+.parent-lesson-card p {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.parent-lesson-card strong {
+  font-size: 18px;
+}
+
+.parent-lesson-card span,
+.parent-lesson-card small {
+  color: #5f5f5b;
+}
+
+.parent-lesson-card p {
+  text-align: right;
+  min-width: 120px;
+}
+
+@media (max-width: 640px) {
+  .parent-lesson-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .parent-lesson-card p {
+    text-align: left;
+  }
+}
+
 .scanner-popup > div:first-child,
 .scanner-area,
 .camera-panel {

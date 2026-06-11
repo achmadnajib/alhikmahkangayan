@@ -1066,7 +1066,7 @@ async function openNotifications() {
     const item = findById("notifications", button.dataset.readNotification);
     if (item) item.read_at = now();
     saveDb();
-    closeModal();
+    closeModal({ fromPopState: true });
     openNotifications();
   });
   root.querySelectorAll("[data-approve-notification-leave]").forEach(button => button.onclick = () => {
@@ -1074,7 +1074,7 @@ async function openNotifications() {
     const item = state.db.notifications.find(n => n.ref_id === button.dataset.approveNotificationLeave && n.type === "leave-approval");
     if (item) item.read_at = now();
     saveDb();
-    closeModal();
+    closeModal({ fromPopState: true });
     openNotifications();
   });
 }
@@ -2469,7 +2469,7 @@ function openForm(table, row = null, defaults = {}, options = {}) {
     if (table === "leave_requests" && data.status === "approved") applyApprovedLeave(row || state.db.leave_requests.at(-1));
     if (options.afterSave) options.afterSave(savedRow);
     const renderTarget = table === "schedules" && currentUser().role === "super_admin" ? "subjects" : table;
-    saveDb(); closeModal(); renderCrud(renderTarget);
+    saveDb(); closeModal({ fromPopState: true }); renderCrud(renderTarget);
     if (table === "settings") {
       applySchoolBrand();
       renderCrud("settings");
@@ -3097,7 +3097,7 @@ function confirmLeaveOverride(session, student, existing, leave) {
       const rec = upsertRecord(session, student, fd.choice, "qr", fd.reason);
       logChange(rec, existing?.status || leave.leave_type, fd.choice, fd.reason);
     }
-    saveDb(); closeModal(); renderSession(session.id); toast("Status disimpan.", "ok");
+    saveDb(); closeModal({ fromPopState: true }); renderSession(session.id); toast("Status disimpan.", "ok");
   };
 }
 
@@ -3198,7 +3198,7 @@ function openManualAttendance(sessionId) {
     const existing = state.db.attendance_records.find(r => r.session_id === session.id && r.student_id === st.id);
     const rec = upsertRecord(session, st, fd.status, "manual", fd.reason);
     logChange(rec, existing?.status || "belum", fd.status, fd.reason);
-    saveDb(); closeModal(); renderSession(session.id); toast("Absensi manual disimpan.", "ok");
+    saveDb(); closeModal({ fromPopState: true }); renderSession(session.id); toast("Absensi manual disimpan.", "ok");
   };
 }
 
@@ -3846,7 +3846,7 @@ function openUserForm(row = null) {
     if (row) Object.assign(row, payload);
     else state.db.users.push({ id: uid("usr"), ...payload, created_at: now() });
     syncLinkedRecordFromUser(row || state.db.users.at(-1));
-    saveDb(); closeModal(); renderUsers();
+    saveDb(); closeModal({ fromPopState: true }); renderUsers();
     if (generated) showGeneratedCredentials({ name: fd.name, email: fd.email, password: generated, role: fd.role });
     else toast("Pengguna disimpan.", "ok");
   };
@@ -3858,14 +3858,14 @@ function openImport(table) {
     e.preventDefault();
     const rows = parseCsv(formData(e.target).csv);
     rows.forEach(r => state.db[table].push({ id: uid(table.slice(0, 3)), ...r, created_at: now(), updated_at: now(), created_by: currentUser().id }));
-    saveDb(); closeModal(); renderCrud(table); toast(`${rows.length} data diimport.`, "ok");
+    saveDb(); closeModal({ fromPopState: true }); renderCrud(table); toast(`${rows.length} data diimport.`, "ok");
   };
 }
 
 function openQrPrint() {
   const options = classOptionList();
   modal("Cetak QR Massal", `<form id="qr-class-form" class="form-grid"><label>Kelas<select name="class_id" required>${options}</select></label><div class="wide actions"><button class="primary">Tampilkan QR</button><button class="ghost" type="button" data-close>Batal</button></div></form>`);
-  byId("qr-class-form").onsubmit = e => { e.preventDefault(); const fd = formData(e.target); closeModal(); showQrCards(studentsInClass(fd.class_id)); };
+  byId("qr-class-form").onsubmit = e => { e.preventDefault(); const fd = formData(e.target); showQrCards(studentsInClass(fd.class_id)); };
 }
 
 function classOptionList(selectedId = "") {
@@ -3884,7 +3884,6 @@ function openClassManager() {
   byId("class-manager-form").onsubmit = e => {
     e.preventDefault();
     const fd = formData(e.target);
-    closeModal();
     openClassStudents(fd.class_id);
   };
 }
@@ -3908,7 +3907,7 @@ function openMoveStudent(studentId) {
     const fd = formData(e.target);
     moveStudentToClass(student, fd.class_id);
     saveDb();
-    closeModal();
+    closeModal({ fromPopState: true });
     renderCrud("students");
     toast(`${student.name} dipindahkan ke ${displayName("classes", findById("classes", fd.class_id))}.`, "ok");
   };
@@ -3935,7 +3934,7 @@ function openSemesterPromotion(classId) {
     const targetClass = target || createClassForSemester(source, nextSemester.id);
     const moved = promoteClassStudents(source.id, targetClass.id);
     saveDb();
-    closeModal();
+    closeModal({ fromPopState: true });
     renderCrud("students");
     toast(`${moved} siswa dipindahkan ke ${displayName("classes", targetClass)}.`, "ok");
   };
@@ -3964,7 +3963,7 @@ function openClassPromotion(classId) {
     const target = findById("classes", fd.to);
     const moved = promoteClassStudents(source.id, fd.to);
     saveDb();
-    closeModal();
+    closeModal({ fromPopState: true });
     renderCrud("students");
     toast(`${moved} siswa dipindahkan ke ${displayName("classes", target)}.`, "ok");
   };
@@ -4027,7 +4026,7 @@ function openPromote() {
     e.preventDefault();
     const fd = formData(e.target);
     studentsInClass(fd.from).forEach(student => moveStudentToClass(student, fd.to));
-    saveDb(); closeModal(); renderCrud("students"); toast("Naik kelas massal selesai. Riwayat kelas lama tetap tersimpan.", "ok");
+    saveDb(); closeModal({ fromPopState: true }); renderCrud("students"); toast("Naik kelas massal selesai. Riwayat kelas lama tetap tersimpan.", "ok");
   };
 }
 
@@ -4077,7 +4076,7 @@ function openClassStudents(classId) {
     const selected = Array.from(e.target.querySelectorAll('[name="student_ids"]:checked')).map(input => input.value);
     selected.forEach(studentId => moveStudentToClass(findById("students", studentId), cls.id));
     saveDb();
-    closeModal();
+    closeModal({ fromPopState: true });
     renderCrud(state.page === "students" ? "students" : "classes");
     toast(`${selected.length} siswa tersimpan di ${cls.name}.`, "ok");
   };
@@ -4089,7 +4088,6 @@ function bindClassStudentActions(classId) {
   if (!backdrop) return;
   backdrop.querySelector("[data-add-class-student]")?.addEventListener("click", () => {
     const cls = findById("classes", classId);
-    closeModal();
     openForm("students", null, {
       active_class_id: cls.id,
       active_academic_year_id: cls.academic_year_id,
@@ -4100,7 +4098,6 @@ function bindClassStudentActions(classId) {
   backdrop.querySelectorAll("[data-edit-class-student]").forEach(button => {
     button.onclick = () => {
       const student = findById("students", button.dataset.editClassStudent);
-      closeModal();
       openForm("students", student, {}, { returnClassId: classId });
     };
   });
@@ -4116,7 +4113,7 @@ function bindClassStudentActions(classId) {
         linkedUser.updated_at = now();
       }
       saveDb();
-      closeModal();
+      closeModal({ fromPopState: true });
       openClassStudents(classId);
       toast("Siswa dihapus.", "ok");
     };
@@ -4147,7 +4144,6 @@ function openClassSubjects(classId) {
     </div>`);
   byId("modal-backdrop").querySelector("[data-add-schedule-day]")?.addEventListener("click", () => openAddScheduleDay(classId));
   byId("modal-backdrop").querySelector("[data-add-master-subject]")?.addEventListener("click", () => {
-    closeModal();
     openForm("subjects");
   });
   byId("modal-backdrop").querySelectorAll("[data-open-schedule-day]").forEach(button => {
@@ -4187,17 +4183,15 @@ function openClassLeaves(classId) {
     </div>`);
   const root = byId("modal-backdrop");
   root.querySelector("[data-add-leave-class]")?.addEventListener("click", () => {
-    closeModal();
     openLeaveForClass(classId);
   });
   root.querySelectorAll("[data-approve-leave-class]").forEach(button => button.onclick = () => {
     approveLeave(button.dataset.approveLeaveClass);
-    closeModal();
+    closeModal({ fromPopState: true });
     openClassLeaves(classId);
   });
   root.querySelectorAll("[data-edit-leave-class]").forEach(button => button.onclick = () => {
     const leave = findById("leave_requests", button.dataset.editLeaveClass);
-    closeModal();
     openForm("leave_requests", leave, {}, { returnLeaveClassId: classId });
   });
   root.querySelectorAll("[data-delete-leave-class]").forEach(button => button.onclick = () => {
@@ -4206,7 +4200,7 @@ function openClassLeaves(classId) {
     leave.deleted_at = now();
     leave.deleted_by = currentUser().id;
     saveDb();
-    closeModal();
+    closeModal({ fromPopState: true });
     openClassLeaves(classId);
     toast("Pengajuan dihapus.", "ok");
   });
@@ -4251,7 +4245,6 @@ function openAddScheduleDay(classId) {
   byId("add-schedule-day-form").onsubmit = e => {
     e.preventDefault();
     const fd = formData(e.target);
-    closeModal();
     openClassDaySchedules(classId, fd.day);
   };
 }
@@ -4290,17 +4283,14 @@ function openClassDaySchedules(classId, day) {
       </div>
     </div>`);
   byId("modal-backdrop").querySelector("[data-add-class-schedule]")?.addEventListener("click", () => {
-    closeModal();
     openScheduleForClass(classId, day);
   });
   byId("modal-backdrop").querySelector("[data-back-schedule-days]")?.addEventListener("click", () => {
-    closeModal();
     openClassSubjects(classId);
   });
   byId("modal-backdrop").querySelectorAll("[data-edit-schedule]").forEach(button => {
     button.onclick = () => {
       const schedule = findById("schedules", button.dataset.editSchedule);
-      closeModal();
       openForm("schedules", schedule, {}, { returnScheduleClassId: classId, returnScheduleDay: day, fixedDay: day });
     };
   });
@@ -4311,7 +4301,7 @@ function openClassDaySchedules(classId, day) {
       schedule.deleted_at = now();
       schedule.deleted_by = currentUser().id;
       saveDb();
-      closeModal();
+      closeModal({ fromPopState: true });
       openClassDaySchedules(classId, day);
       toast("Jadwal mapel dihapus.", "ok");
     };

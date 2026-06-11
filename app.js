@@ -10,7 +10,8 @@ const roles = {
   guru: "Guru",
   wali_kelas: "Wali Kelas",
   kepala_sekolah: "Kepala Sekolah",
-  siswa: "Siswa"
+  siswa: "Siswa",
+  wali_murid: "Wali Murid"
 };
 
 const statusLabels = {
@@ -379,6 +380,7 @@ function normalizeDb(db, persistLocal = false) {
   removeDeprecatedRoles(db);
   removeNonAdminEmails(db);
   normalizeTeacherRoles(db);
+  normalizeLeaveRequests(db);
   repairAdminRole(db);
   ensureStarterAccess(db);
   if (!db.students.length && !db.teachers.length) {
@@ -393,6 +395,16 @@ function removeNonAdminEmails(db) {
   db.teachers.forEach(t => delete t.email);
   db.users.forEach(u => {
     if (u.role !== "super_admin") delete u.email;
+  });
+}
+
+function normalizeLeaveRequests(db) {
+  db.leave_requests.forEach(leave => {
+    if (!leave.status) leave.status = "pending";
+    if (!leave.end_date) leave.end_date = leave.start_date || leave.tanggal || today();
+    if (!leave.start_date) leave.start_date = leave.tanggal || leave.end_date || today();
+    if (!leave.leave_type && leave.jenis) leave.leave_type = leave.jenis;
+    if (!leave.reason && leave.keterangan) leave.reason = leave.keterangan;
   });
 }
 
@@ -685,6 +697,12 @@ async function persistRemoteDb(db) {
 function loadSession() { return JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); }
 function saveSession(session) { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); state.session = session; }
 function validateStoredSession(session) {
+  if (session?.role === "wali_murid") {
+    const student = state.db.students.find(item => item.id === session.murid_id && !item.deleted_at);
+    if (student) return { ...session, nama_siswa: student.name };
+    localStorage.removeItem(SESSION_KEY);
+    return null;
+  }
   if (!session?.userId) return null;
   const user = state.db.users.find(item => item.id === session.userId && item.active !== "false");
   if (!user || !roles[session.role || user.role] || !canLoginAsRole(user, session.role || user.role)) {
@@ -720,6 +738,7 @@ function bindAuth() {
   byId("login-form").addEventListener("submit", async e => {
     e.preventDefault();
     const fd = formData(e.target);
+    if (fd.role === "wali_murid") return handleParentLogin(fd.email);
     const user = findLoginUser(fd.role, fd.email);
     const effectiveRole = user?.role === "super_admin" ? "super_admin" : fd.role === "guru" && user?.role === "wali_kelas" ? "wali_kelas" : fd.role;
     const needsPassword = loginNeedsPassword(effectiveRole);
@@ -748,6 +767,12 @@ function updateLoginIdentifierHint() {
     byId("login-password-field")?.classList.add("hidden");
     byId("login-password").required = false;
     byId("login-password").value = "";
+  } else if (role === "wali_murid") {
+    label.textContent = "Nama Siswa";
+    input.placeholder = "Masukkan nama siswa";
+    byId("login-password-field")?.classList.add("hidden");
+    byId("login-password").required = false;
+    byId("login-password").value = "";
   } else if (role === "super_admin") {
     label.textContent = "Username / Email Admin";
     input.placeholder = "Masukkan username atau email admin";
@@ -770,6 +795,64 @@ function updateLoginIdentifierHint() {
 
 function loginNeedsPassword(role) {
   return role === "super_admin";
+}
+
+function handleParentLogin(identifier) {
+  const matches = findStudentsByParentLogin(identifier);
+  if (!matches.length) return toast("Nama siswa tidak ditemukan.", "error");
+  if (matches.length === 1) return loginAsParent(matches[0]);
+  showParentStudentChooser(matches);
+}
+
+function findStudentsByParentLogin(identifier) {
+  const value = String(identifier || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!value) return [];
+  const activeStudents = state.db.students.filter(student => !student.deleted_at && student.status !== "keluar");
+  const exact = activeStudents.filter(student => String(student.name || "").trim().toLowerCase().replace(/\s+/g, " ") === value);
+  return exact.length ? exact : activeStudents.filter(student => String(student.name || "").toLowerCase().includes(value));
+}
+
+function loginAsParent(student) {
+  state.page = "dashboard";
+  saveSession({
+    role: "wali_murid",
+    murid_id: student.id,
+    nama_siswa: student.name,
+    quoteSeed: uid("parent")
+  });
+  showApp();
+  toast(`Masuk sebagai wali ${student.name}.`, "ok");
+}
+
+function showParentStudentChooser(students) {
+  modal("Pilih Siswa", `<div class="parent-choice-list">
+    <p class="muted">Nama siswa ditemukan lebih dari satu. Pilih anak yang ingin dipantau.</p>
+    ${students.map(student => {
+      const cls = studentClassForSelectedYear(student) || findById("classes", student.active_class_id);
+      return `<button type="button" class="parent-choice-card" data-parent-student="${student.id}">
+        <strong>${escapeHtml(student.name)}</strong>
+        <span>${escapeHtml(displayName("classes", cls) || "-")} · ${escapeHtml(student.nis || student.id)}</span>
+        <small>Wali: ${escapeHtml(parentNameForStudent(student) || "-")} · ${escapeHtml(shortAddress(student.address) || "-")}</small>
+      </button>`;
+    }).join("")}
+  </div>`);
+  byId("modal-backdrop").querySelectorAll("[data-parent-student]").forEach(button => {
+    button.onclick = () => {
+      const student = findById("students", button.dataset.parentStudent);
+      if (!student) return toast("Siswa tidak ditemukan.", "error");
+      closeModal({ fromPopState: true });
+      loginAsParent(student);
+    };
+  });
+}
+
+function parentNameForStudent(student = {}) {
+  return student.guardian_name || student.parent_name || student.father_name || student.mother_name || "";
+}
+
+function shortAddress(address = "") {
+  const text = String(address || "").trim();
+  return text.length > 48 ? `${text.slice(0, 48)}...` : text;
 }
 
 function findLoginUser(role, identifier) {
@@ -1090,6 +1173,17 @@ function notificationItemHtml(notification) {
 }
 
 function currentUser() {
+  if (state.session?.role === "wali_murid") {
+    const student = findById("students", state.session.murid_id);
+    return {
+      id: `wali_${state.session.murid_id}`,
+      name: parentNameForStudent(student) || `Wali ${student?.name || "Murid"}`,
+      role: "wali_murid",
+      student_id: state.session.murid_id,
+      murid_id: state.session.murid_id,
+      active: student && !student.deleted_at ? "true" : "false"
+    };
+  }
   const user = state.db.users.find(u => u.id === state.session?.userId);
   if (!user) return user;
   return state.session?.role && user.role !== state.session.role ? { ...user, original_role: user.role, role: state.session.role } : user;
@@ -1100,16 +1194,18 @@ function landingPageForRole(role) {
     guru: "attendance",
     wali_kelas: "leave_requests",
     kepala_sekolah: "reports",
-    siswa: "dashboard"
+    siswa: "dashboard",
+    wali_murid: "dashboard"
   })[role] || "dashboard";
 }
 function canDelete() { return ["super_admin", "kepala_sekolah"].includes(currentUser().role); }
 function canEditMaster() { return ["super_admin", "kepala_sekolah"].includes(currentUser().role); }
 function canReport() { return ["super_admin", "guru", "wali_kelas", "kepala_sekolah"].includes(currentUser().role); }
-function canCreateLeaveRequest(table) { return table === "leave_requests" && ["super_admin", "guru", "wali_kelas"].includes(currentUser().role); }
+function canCreateLeaveRequest(table) { return table === "leave_requests" && ["super_admin", "guru", "wali_kelas", "wali_murid"].includes(currentUser().role); }
 function canApproveLeaveFor(classId) {
   const user = currentUser();
-  if (user.role === "super_admin") return true;
+  if (["super_admin", "kepala_sekolah"].includes(user.role)) return true;
+  if (user.role === "guru") return state.db.schedules.some(s => !s.deleted_at && s.teacher_id === user.teacher_id && s.class_id === classId);
   if (user.role !== "wali_kelas") return false;
   return state.db.classes.some(c => c.id === classId && c.homeroom_teacher_id === user.teacher_id);
 }
@@ -1155,11 +1251,13 @@ function iconForPage(page) {
     schedules: "M4 5h16v16H4V5Zm4-3v6M16 2v6M4 10h16",
     periods: "M4 4h16v4H4V4Zm0 8h16v8H4v-8Zm4 2v4M12 14v4M16 14v4",
     leave_requests: "M5 3h14v18H5V3Zm4 6h6M9 13h6M9 17h3",
+    parent_leave_requests: "M5 3h14v18H5V3Zm4 6h6M9 13h6M9 17h3",
     meetings: "M4 5h16v10H7l-3 3V5Zm5 4h6",
     audit_logs: "M5 3h14v18H5V3Zm4 5h6M9 12h6M9 16h3",
     users: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 9a7 7 0 0 1 14 0",
     settings: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v3M12 18v3M4.9 4.9 7 7M17 17l2.1 2.1M3 12h3M18 12h3M4.9 19.1 7 17M17 7l2.1-2.1",
     profile: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-6 9a6 6 0 0 1 12 0",
+    wali_murid: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-8 9a8 8 0 0 1 16 0M17 5l3 3-3 3",
     classes: "M4 5h16v14H4V5Zm4 0v14M4 10h16",
     logout: "M10 6H5v12h5M14 8l4 4-4 4M8 12h10",
     mobile_settings: "M4 6h16M4 12h16M4 18h16"
@@ -1173,7 +1271,7 @@ function adminMenuGroups() {
     { label: "Utama", items: [["dashboard", "Dashboard"], ["attendance", "Sesi & Scan QR"], ["history", "History"], ["reports", "Laporan"]] },
     { label: "Akademik", items: [["students", "Siswa & Kelas"], ["teachers", "Guru"], ["subjects", "Mapel & Jadwal"]] },
     { label: "Periode", items: [["periods", "Periode Akademik"]] },
-    { label: "Sistem", items: [["leave_requests", "Izin & Sakit"], ["meetings", "Rapat"], ["audit_logs", "Audit Sistem"], ["users", "Pengguna & Role"], ["settings", "Pengaturan"], ["profile", "Profil Saya"]] }
+    { label: "Sistem", items: [["leave_requests", "Izin & Sakit"], ["parent_leave_requests", "Pengajuan Izin Wali"], ["meetings", "Rapat"], ["audit_logs", "Audit Sistem"], ["users", "Pengguna & Role"], ["settings", "Pengaturan"], ["profile", "Profil Saya"]] }
   ];
 }
 
@@ -1184,14 +1282,15 @@ function menuItemsForCurrentUser() {
     ["attendance", "Sesi & Scan QR", ["super_admin", "guru"].includes(user.role)],
     ["my_qr", "QR Saya", user.role === "siswa"],
     ["student_today", "Hari Ini", user.role === "siswa"],
-    ["history", "History", ["super_admin", "guru", "wali_kelas", "kepala_sekolah", "siswa"].includes(user.role)],
+    ["history", "History", ["super_admin", "guru", "wali_kelas", "kepala_sekolah", "siswa", "wali_murid"].includes(user.role)],
     ["students", "Siswa & Kelas", canEditMaster() || user.role === "wali_kelas"],
     ["teachers", "Guru", canEditMaster()],
     ["classes", "Kelas", canEditMaster()],
     ["subjects", "Mapel & Jadwal", canEditMaster()],
     ["schedules", "Jadwal Pelajaran", user.role === "guru"],
     ["periods", "Periode Akademik", canEditMaster()],
-    ["leave_requests", "Izin & Sakit", ["super_admin", "guru", "wali_kelas"].includes(user.role)],
+    ["leave_requests", "Izin & Sakit", ["super_admin", "guru", "wali_kelas", "wali_murid"].includes(user.role)],
+    ["parent_leave_requests", "Pengajuan Izin Wali", ["super_admin", "guru", "wali_kelas", "kepala_sekolah"].includes(user.role)],
     ["meetings", "Rapat", user.role === "kepala_sekolah"],
     ["reports", "Laporan", canReport()],
     ["audit_logs", "Audit Sistem", ["super_admin", "kepala_sekolah"].includes(user.role)],
@@ -1212,7 +1311,8 @@ function mobileBarItemsForCurrentUser() {
     guru: [["dashboard", "Dashboard"], ["history", "History"], ["attendance", "Scan"], ["reports", "Laporan"]],
     wali_kelas: [["dashboard", "Dashboard"], ["history", "History"], ["leave_requests", "Izin"], ["reports", "Laporan"]],
     kepala_sekolah: [["dashboard", "Dashboard"], ["students", "Siswa"], ["meetings", "Rapat"], ["reports", "Laporan"]],
-    siswa: [["dashboard", "Dashboard"], ["history", "History"], ["my_qr", "QR"], ["student_today", "Hari Ini"], ["profile", "Profil"]]
+    siswa: [["dashboard", "Dashboard"], ["history", "History"], ["my_qr", "QR"], ["student_today", "Hari Ini"], ["profile", "Profil"]],
+    wali_murid: [["dashboard", "Dashboard"], ["history", "History"], ["leave_requests", "Izin"], ["profile", "Profil"]]
   };
   if (user.role === "siswa") return byRole.siswa.filter(([id]) => id === "my_qr" || canAccessFull(id));
   const preferred = byRole[user.role] || byRole.siswa;
@@ -1245,7 +1345,7 @@ function navigate(page, options = {}) {
   if (!options.replaceHistory) pushAppHistory(page);
   document.querySelector(".sidebar").classList.remove("open");
   renderMenu();
-  const titles = { dashboard: "Dashboard", attendance: "Scan", history: "History", subjects: "Mapel & Jadwal", reports: "Reports", users: "Pengguna & Role", profile: "Profile", periods: "Periode Akademik", audit_logs: "Audit Sistem" };
+  const titles = { dashboard: "Dashboard", attendance: "Scan", history: "History", subjects: "Mapel & Jadwal", reports: "Reports", users: "Pengguna & Role", profile: "Profile", periods: "Periode Akademik", audit_logs: "Audit Sistem", leave_requests: "Izin & Sakit", parent_leave_requests: "Pengajuan Izin Wali" };
   const schema = schemas[page];
   byId("page-title").textContent = titles[page] || schema?.title || "Aplikasi";
   byId("page-subtitle").textContent = page === "attendance" ? "Buka jadwal aktif terlebih dahulu sebelum scan QR siswa." : "";
@@ -1256,6 +1356,8 @@ function navigate(page, options = {}) {
   if (page === "history") return renderHistory();
   if (page === "student_today") return renderStudentToday();
   if (page === "reports") return renderReports();
+  if (page === "leave_requests" && currentUser().role === "wali_murid") return renderParentLeaveRequests();
+  if (page === "parent_leave_requests") return renderParentLeaveAdmin();
   if (page === "meetings") return renderMeetings();
   if (page === "periods") return renderPeriodHub();
   if (page === "audit_logs") return renderAuditLogs();
@@ -1445,6 +1547,7 @@ function renderDashboard() {
   if (role === "guru") return renderTeacherDashboard();
   if (role === "wali_kelas") return renderHomeroomDashboard();
   if (role === "kepala_sekolah") return renderHeadmasterDashboard();
+  if (role === "wali_murid") return renderParentDashboard();
   const date = today();
   const recordsToday = recordsForSelectedYear().filter(r => r.date === date);
   const stat = s => recordsToday.filter(r => r.status === s).length;
@@ -1543,6 +1646,239 @@ function renderStudentDashboard() {
     </section>`;
   bindProfileSummaryActions();
   bindStudentIdentityToggle();
+}
+
+function parentStudent() {
+  return findById("students", state.session?.murid_id || currentUser()?.murid_id);
+}
+
+function parentAttendanceRecords() {
+  const student = parentStudent();
+  if (!student) return [];
+  return recordsForSelectedYear().filter(record => record.student_id === student.id);
+}
+
+function latestStudentRecordForDate(studentId, date) {
+  return recordsForSelectedYear()
+    .filter(record => record.student_id === studentId && record.date === date)
+    .sort((a, b) => String(b.scan_time || b.start_time || "").localeCompare(String(a.scan_time || a.start_time || "")))[0];
+}
+
+function renderParentDashboard() {
+  const student = parentStudent();
+  if (!student) return logoutApp();
+  const cls = studentClassForSelectedYear(student) || findById("classes", student.active_class_id);
+  const todayRecord = latestStudentRecordForDate(student.id, today());
+  const records = parentAttendanceRecords();
+  const totals = attendanceTotals(records);
+  const percent = totals.total ? (((totals.hadir + totals.terlambat) / totals.total) * 100).toFixed(1) : "0.0";
+  byId("view").innerHTML = `
+    <section class="panel parent-dashboard">
+      <div class="panel-head">
+        <div>
+          <span class="eyebrow">Pantauan Anak</span>
+          <h2>${escapeHtml(student.name)}</h2>
+          <p class="muted">${escapeHtml(displayName("classes", cls) || "-")} · NIS ${escapeHtml(student.nis || "-")}</p>
+        </div>
+        <button class="ghost" data-inline-logout>Keluar</button>
+      </div>
+      <div class="summary-grid">
+        ${card("Status Hari Ini", todayRecord ? badge(todayRecord.status) : "Belum ada data")}
+        ${card("Jam Masuk", escapeHtml(todayRecord?.scan_time || "-"))}
+        ${card("Jam Pulang", escapeHtml(todayRecord?.checkout_time || todayRecord?.end_time || "-"))}
+        ${card("Keterangan", escapeHtml(todayRecord?.note || (todayRecord?.status === "terlambat" ? "Terlambat" : "-")))}
+      </div>
+    </section>
+    <section class="cards">
+      ${card("Hadir", totals.hadir)}
+      ${card("Izin", totals.izin)}
+      ${card("Sakit", totals.sakit)}
+      ${card("Alfa", totals.alfa)}
+      ${card("Terlambat", totals.terlambat)}
+      ${card("Kehadiran", `${percent}%`)}
+    </section>
+    <section class="panel">
+      <div class="panel-head"><div><h2>Pengajuan Terbaru</h2><p class="muted">Izin/sakit dari wali tidak mengubah absensi sebelum disetujui guru atau admin.</p></div><button class="primary" data-parent-add-leave>Ajukan Izin/Sakit</button></div>
+      ${parentLeaveTable()}
+    </section>`;
+  bindProfileSummaryActions();
+  byId("view").querySelector("[data-parent-add-leave]")?.addEventListener("click", openParentLeaveForm);
+}
+
+function parentLeaveTable() {
+  const student = parentStudent();
+  const rows = state.db.leave_requests
+    .filter(leave => !leave.deleted_at && leave.student_id === student?.id)
+    .sort((a, b) => String(b.created_at || b.start_date).localeCompare(String(a.created_at || a.start_date)))
+    .slice(0, 8)
+    .map(leave => `<tr><td>${escapeHtml(leave.start_date || "")}</td><td>${escapeHtml(statusLabels[leave.leave_type] || leave.leave_type || "")}</td><td>${badge(leave.status)}</td><td>${escapeHtml(leave.reason || "-")}</td><td>${escapeHtml(leave.approval_note || "-")}</td></tr>`)
+    .join("");
+  return `<div class="table-wrap"><table><thead><tr><th>Tanggal</th><th>Jenis</th><th>Status</th><th>Keterangan</th><th>Catatan Admin</th></tr></thead><tbody>${rows || emptyRow(5)}</tbody></table></div>`;
+}
+
+function renderParentHistory() {
+  const student = parentStudent();
+  if (!student) return logoutApp();
+  const filter = state.filters.parentHistoryRange || "month";
+  const start = state.filters.parentHistoryStart || "";
+  const end = state.filters.parentHistoryEnd || "";
+  let records = filterParentRecords(parentAttendanceRecords(), filter, start, end);
+  const totals = attendanceTotals(records);
+  const percent = totals.total ? (((totals.hadir + totals.terlambat) / totals.total) * 100).toFixed(1) : "0.0";
+  const rows = records.sort((a, b) => String(b.date).localeCompare(String(a.date))).map(record => `
+    <tr>
+      <td>${escapeHtml(record.date || "")}</td>
+      <td>${badge(record.status)}</td>
+      <td>${escapeHtml(record.scan_time || "-")}</td>
+      <td>${escapeHtml(record.checkout_time || record.end_time || "-")}</td>
+      <td>${escapeHtml(record.note || "-")}</td>
+      <td>${record.status === "terlambat" ? "Ya" : "Tidak"}</td>
+    </tr>`).join("");
+  byId("view").innerHTML = `
+    <section class="panel">
+      <div class="panel-head"><div><h2>Riwayat Absensi ${escapeHtml(student.name)}</h2><p class="muted">Data ini hanya untuk anak yang dipilih saat login wali murid.</p></div></div>
+      <div class="filters">
+        <select id="parent-history-range">
+          <option value="today" ${filter === "today" ? "selected" : ""}>Hari ini</option>
+          <option value="week" ${filter === "week" ? "selected" : ""}>Minggu ini</option>
+          <option value="month" ${filter === "month" ? "selected" : ""}>Bulan ini</option>
+          <option value="custom" ${filter === "custom" ? "selected" : ""}>Rentang tanggal</option>
+        </select>
+        <input type="date" id="parent-history-start" value="${escapeHtml(start)}">
+        <input type="date" id="parent-history-end" value="${escapeHtml(end)}">
+      </div>
+    </section>
+    <section class="cards">
+      ${card("Hadir", totals.hadir)}
+      ${card("Izin", totals.izin)}
+      ${card("Sakit", totals.sakit)}
+      ${card("Alfa", totals.alfa)}
+      ${card("Terlambat", totals.terlambat)}
+      ${card("Kehadiran", `${percent}%`)}
+    </section>
+    <section class="panel">
+      <div class="table-wrap"><table><thead><tr><th>Tanggal</th><th>Status</th><th>Jam Masuk</th><th>Jam Pulang</th><th>Keterangan</th><th>Terlambat</th></tr></thead><tbody>${rows || emptyRow(6)}</tbody></table></div>
+    </section>`;
+  byId("parent-history-range").onchange = e => {
+    state.filters.parentHistoryRange = e.target.value;
+    renderParentHistory();
+  };
+  byId("parent-history-start").onchange = e => {
+    state.filters.parentHistoryStart = e.target.value;
+    state.filters.parentHistoryRange = "custom";
+    renderParentHistory();
+  };
+  byId("parent-history-end").onchange = e => {
+    state.filters.parentHistoryEnd = e.target.value;
+    state.filters.parentHistoryRange = "custom";
+    renderParentHistory();
+  };
+}
+
+function filterParentRecords(records, filter, start, end) {
+  const nowDate = new Date(today());
+  if (filter === "today") return records.filter(record => record.date === today());
+  if (filter === "week") {
+    const day = nowDate.getDay() || 7;
+    const first = new Date(nowDate);
+    first.setDate(nowDate.getDate() - day + 1);
+    const startDate = first.toISOString().slice(0, 10);
+    return records.filter(record => record.date >= startDate && record.date <= today());
+  }
+  if (filter === "custom") {
+    return records.filter(record => (!start || record.date >= start) && (!end || record.date <= end));
+  }
+  const month = today().slice(0, 7);
+  return records.filter(record => String(record.date || "").startsWith(month));
+}
+
+function renderParentLeaveRequests() {
+  const student = parentStudent();
+  if (!student) return logoutApp();
+  byId("view").innerHTML = `
+    <section class="panel">
+      <div class="panel-head">
+        <div><h2>Pengajuan Izin/Sakit</h2><p class="muted">Pengajuan wali murid berstatus menunggu sampai disetujui guru, wali kelas, atau admin.</p></div>
+        <button class="primary" data-parent-add-leave>Ajukan Izin/Sakit</button>
+      </div>
+      ${parentLeaveTable()}
+    </section>`;
+  byId("view").querySelector("[data-parent-add-leave]")?.addEventListener("click", openParentLeaveForm);
+}
+
+function renderParentLeaveAdmin() {
+  const rows = visibleRows("leave_requests")
+    .filter(leave => leave.created_by_role === "wali_murid")
+    .sort((a, b) => String(b.created_at || b.start_date).localeCompare(String(a.created_at || a.start_date)));
+  const body = rows.map(leave => {
+    const student = findById("students", leave.student_id);
+    const cls = findById("classes", leave.class_id);
+    return `<tr>
+      <td>${escapeHtml(leave.start_date || "")}</td>
+      <td>${escapeHtml(student?.name || "-")}</td>
+      <td>${escapeHtml(displayName("classes", cls) || "-")}</td>
+      <td>${escapeHtml(statusLabels[leave.leave_type] || leave.leave_type || "-")}</td>
+      <td>${escapeHtml(leave.reason || "-")}</td>
+      <td>${evidenceLink(leave.attachment)}</td>
+      <td>${badge(leave.status)}</td>
+      <td>${escapeHtml(leave.approval_note || "-")}</td>
+      <td class="row-actions">
+        ${leave.status === "pending" && canApproveLeaveFor(leave.class_id) ? `<button class="secondary" data-approve="${leave.id}">Setujui</button><button class="ghost" data-reject="${leave.id}">Tolak</button>` : ""}
+      </td>
+    </tr>`;
+  }).join("");
+  byId("view").innerHTML = `
+    <section class="panel">
+      <div class="panel-head"><div><h2>Pengajuan Izin Wali</h2><p class="muted">Pengajuan dari wali murid tidak mengubah absensi sampai disetujui.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Tanggal</th><th>Siswa</th><th>Kelas</th><th>Jenis</th><th>Keterangan</th><th>Bukti</th><th>Status</th><th>Catatan</th><th>Aksi</th></tr></thead><tbody>${body || emptyRow(9)}</tbody></table></div>
+    </section>`;
+  byId("view").querySelectorAll("[data-approve]").forEach(button => button.onclick = () => approveLeave(button.dataset.approve));
+  byId("view").querySelectorAll("[data-reject]").forEach(button => button.onclick = () => openRejectLeave(button.dataset.reject));
+}
+
+function openParentLeaveForm() {
+  const student = parentStudent();
+  const cls = student ? studentClassForSelectedYear(student) || findById("classes", student.active_class_id) : null;
+  if (!student || !cls) return toast("Data siswa atau kelas tidak ditemukan.", "error");
+  modal("Ajukan Izin/Sakit", `<form id="parent-leave-form" class="form-grid">
+    <label>Tanggal<input name="date" type="date" value="${today()}" required></label>
+    <label>Jenis<select name="type" required><option value="izin">Izin</option><option value="sakit">Sakit</option></select></label>
+    <label class="wide">Keterangan<textarea name="reason" required></textarea></label>
+    <label class="wide image-upload-field">Bukti
+      <span class="image-upload-empty">Belum ada gambar</span>
+      <input type="hidden" name="attachment" value="">
+      <input name="attachment__file" type="file" accept="image/*" capture="environment">
+      <small>Opsional. Upload atau foto surat/bukti jika ada.</small>
+    </label>
+    <div class="wide actions"><button class="primary">Kirim Pengajuan</button><button class="ghost" type="button" data-close>Batal</button></div>
+  </form>`);
+  byId("parent-leave-form").onsubmit = async e => {
+    e.preventDefault();
+    const fd = await formDataWithImages(e.target);
+    const leave = {
+      id: uid("lea"),
+      student_id: student.id,
+      class_id: cls.id,
+      academic_year_id: cls.academic_year_id,
+      semester_id: cls.semester_id,
+      leave_type: fd.type,
+      start_date: fd.date,
+      end_date: fd.date,
+      reason: fd.reason,
+      attachment: fd.attachment || "",
+      status: "pending",
+      approval_note: "",
+      created_by_role: "wali_murid",
+      created_by_parent_name: currentUser().name,
+      created_at: now(),
+      updated_at: now()
+    };
+    state.db.leave_requests.push(leave);
+    saveDb();
+    closeModal({ fromPopState: true });
+    renderParentLeaveRequests();
+    toast("Pengajuan dikirim. Menunggu persetujuan.", "ok");
+  };
 }
 
 function headmasterUnitSwitcher(mode = "desktop") {
@@ -1910,7 +2246,7 @@ function profileSummaryCard() {
 }
 
 function profileAvatarHtml(user) {
-  const student = user.role === "siswa" ? findById("students", user.student_id) : null;
+  const student = ["siswa", "wali_murid"].includes(user.role) ? findById("students", user.student_id || user.murid_id) : null;
   const photo = student?.photo;
   return `<div class="profile-avatar">${photo ? `<img src="${escapeHtml(photo)}" alt="${escapeHtml(student.name || user.name || "Siswa")}">` : escapeHtml(initials(user.name || roles[user.role] || "U"))}</div>`;
 }
@@ -1921,13 +2257,15 @@ function bindProfileSummaryActions(root = byId("view")) {
 }
 
 function profileDetails(user) {
-  if (user.role === "siswa") {
-    const student = findById("students", user.student_id) || {};
+  if (["siswa", "wali_murid"].includes(user.role)) {
+    const student = findById("students", user.student_id || user.murid_id) || {};
     const cls = studentClassForSelectedYear(student) || findById("classes", student.active_class_id);
     return [
+      ["Nama Siswa", student.name],
       ["NISN", student.nisn],
       ["NIS", student.nis],
       ["Kelas", displayName("classes", cls)],
+      ["Wali", parentNameForStudent(student)],
       ["Orang Tua", student.parent_phone]
     ];
   }
@@ -2359,7 +2697,10 @@ function crudActions(table, row, canWrite) {
   if (table === "students") parts.push(`<button class="secondary" data-qr="${row.id}">QR</button>`);
   if (table === "students" && canWrite) parts.push(`<button class="secondary" data-move-student="${row.id}">Pindah Kelas</button>`);
   if (table === "classes" && canWrite) parts.push(`<button class="secondary" data-manage-class="${row.id}">Kelola Siswa</button>`);
-  if (table === "leave_requests" && row.status === "pending" && canApproveLeaveFor(row.class_id)) parts.push(`<button class="secondary" data-approve="${row.id}">Setujui</button>`);
+  if (table === "leave_requests" && row.status === "pending" && canApproveLeaveFor(row.class_id)) {
+    parts.push(`<button class="secondary" data-approve="${row.id}">Setujui</button>`);
+    parts.push(`<button class="ghost" data-reject="${row.id}">Tolak</button>`);
+  }
   if (canWrite) parts.push(`<button class="ghost" data-edit="${row.id}">Edit</button>`);
   if (canWrite && canDelete()) parts.push(`<button class="danger" data-delete="${row.id}">Hapus</button>`);
   return parts.join("");
@@ -2396,6 +2737,7 @@ function bindCrud(table) {
   root.querySelectorAll("[data-move-student]").forEach(b => b.onclick = () => openMoveStudent(b.dataset.moveStudent));
   root.querySelectorAll("[data-manage-class]").forEach(b => b.onclick = () => openClassStudents(b.dataset.manageClass));
   root.querySelectorAll("[data-approve]").forEach(b => b.onclick = () => approveLeave(b.dataset.approve));
+  root.querySelectorAll("[data-reject]").forEach(b => b.onclick = () => openRejectLeave(b.dataset.reject));
 }
 
 function visibleRows(table) {
@@ -2429,6 +2771,9 @@ function visibleRows(table) {
   if (table === "leave_requests" && ["kepala_sekolah"].includes(user.role) && unit) {
     const classIds = new Set(classesForSelectedYear().map(c => c.id));
     rows = rows.filter(r => classIds.has(r.class_id));
+  }
+  if (table === "leave_requests" && user.role === "wali_murid") {
+    rows = rows.filter(r => r.student_id === user.murid_id);
   }
   if (table === "students" && user.role === "wali_kelas") {
     const classIds = new Set(state.db.classes.filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
@@ -2860,6 +3205,7 @@ function todaySessionForSchedule(scheduleId) {
 }
 
 function renderHistory() {
+  if (currentUser().role === "wali_murid") return renderParentHistory();
   const scopedRecords = scopedAttendanceRecords();
   const selectedDate = state.filters.historyDate || "";
   const selectedSubject = state.filters.historySubject || "";
@@ -3207,13 +3553,41 @@ function approveLeave(id) {
   if (!leave || !canApproveLeaveFor(leave.class_id)) return toast("Anda tidak memiliki akses menyetujui izin ini.", "error");
   Object.assign(leave, { status: "approved", approved_by: currentUser().id, approved_at: now(), updated_at: now() });
   applyApprovedLeave(leave);
-  saveDb(); renderCrud("leave_requests"); toast("Izin/sakit disetujui dan diterapkan.", "ok");
+  saveDb();
+  state.page === "parent_leave_requests" ? renderParentLeaveAdmin() : renderCrud("leave_requests");
+  toast("Izin/sakit disetujui dan diterapkan.", "ok");
+}
+
+function openRejectLeave(id) {
+  const leave = findById("leave_requests", id);
+  if (!leave || !canApproveLeaveFor(leave.class_id)) return toast("Anda tidak memiliki akses menolak izin ini.", "error");
+  modal("Tolak Pengajuan Izin", `<form id="reject-leave-form" class="form-grid">
+    <label class="wide">Catatan Admin/Guru<textarea name="note" required placeholder="Tuliskan alasan penolakan"></textarea></label>
+    <div class="wide actions"><button class="danger">Tolak Pengajuan</button><button class="ghost" type="button" data-close>Batal</button></div>
+  </form>`);
+  byId("reject-leave-form").onsubmit = e => {
+    e.preventDefault();
+    const fd = formData(e.target);
+    Object.assign(leave, {
+      status: "rejected",
+      approval_note: fd.note,
+      approved_by: currentUser().id,
+      approved_at: now(),
+      updated_at: now()
+    });
+    saveDb();
+    closeModal({ fromPopState: true });
+    state.page === "parent_leave_requests" ? renderParentLeaveAdmin() : renderCrud("leave_requests");
+    toast("Pengajuan ditolak. Absensi utama tidak diubah.", "ok");
+  };
 }
 
 function applyApprovedLeave(leave) {
+  const touchedSessions = new Set();
   state.db.attendance_records.forEach(rec => {
     if (rec.student_id !== leave.student_id) return;
     if (rec.date < leave.start_date || rec.date > leave.end_date) return;
+    touchedSessions.add(rec.session_id);
     if (["hadir", "terlambat"].includes(rec.status)) return;
     const old = rec.status;
     rec.status = leave.leave_type;
@@ -3222,6 +3596,37 @@ function applyApprovedLeave(leave) {
     rec.updated_by = currentUser().id;
     rec.updated_at = now();
     logChange(rec, old, rec.status, "Izin/sakit disetujui setelah absensi.");
+  });
+  state.db.attendance_sessions.forEach(session => {
+    if (session.deleted_at || session.class_id !== leave.class_id) return;
+    if (session.date < leave.start_date || session.date > leave.end_date) return;
+    if (touchedSessions.has(session.id)) return;
+    const student = findById("students", leave.student_id);
+    if (!student) return;
+    const rec = {
+      id: uid("rec"),
+      session_id: session.id,
+      student_id: student.id,
+      class_id: session.class_id,
+      subject_id: session.subject_id,
+      teacher_id: session.teacher_id,
+      schedule_id: session.schedule_id,
+      academic_year_id: session.academic_year_id,
+      semester_id: session.semester_id,
+      date: session.date,
+      start_time: session.start_time,
+      end_time: session.end_time,
+      scan_time: "",
+      status: leave.leave_type,
+      input_method: "leave_auto",
+      note: "Dibuat otomatis dari izin/sakit disetujui.",
+      created_by: currentUser().id,
+      updated_by: currentUser().id,
+      created_at: now(),
+      updated_at: now()
+    };
+    state.db.attendance_records.push(rec);
+    logChange(rec, "belum", rec.status, "Izin/sakit disetujui sebelum siswa absen.");
   });
 }
 
@@ -3781,22 +4186,22 @@ function userRoleCard(user) {
 function renderProfile() {
   const user = currentUser();
   const adminProfile = user.role === "super_admin";
-  const readOnlyProfile = user.role === "siswa";
-  const linkedInfo = user.role === "siswa"
-    ? `NISN: ${escapeHtml(findById("students", user.student_id)?.nisn || "-")}`
+  const readOnlyProfile = ["siswa", "wali_murid"].includes(user.role);
+  const linkedInfo = ["siswa", "wali_murid"].includes(user.role)
+    ? `NISN: ${escapeHtml(findById("students", user.student_id || user.murid_id)?.nisn || "-")}`
     : user.teacher_id ? `NIP: ${escapeHtml(findById("teachers", user.teacher_id)?.nip || user.nip || "-")}` : "Akun administrator";
   const biodata = profileDetails(user);
   byId("view").innerHTML = `
     <section class="panel profile-page-panel">
       <div class="panel-head">
-        <div><h2>Profil Saya</h2><p class="muted">${adminProfile ? "Administrator bisa mengubah email dan password." : "Login mengikuti NIP/NISN pada data Administrator."}</p></div>
+        <div><h2>Profil Saya</h2><p class="muted">${adminProfile ? "Administrator bisa mengubah email dan password." : user.role === "wali_murid" ? "Akses wali murid mengikuti siswa yang dipilih saat login." : "Login mengikuti NIP/NISN pada data Administrator."}</p></div>
         ${!adminProfile ? `<button class="ghost" data-inline-logout>Keluar</button>` : ""}
       </div>
       ${!adminProfile ? `<div class="profile-page-avatar">${profileAvatarHtml(user)}</div>` : ""}
       ${!adminProfile ? `<div class="profile-biodata-grid profile-biodata-page">
         ${biodata.map(([label, value]) => `<p><small>${escapeHtml(label)}</small><strong>${escapeHtml(value || "-")}</strong></p>`).join("")}
       </div>` : ""}
-      ${readOnlyProfile ? `<div class="readonly-profile-note">Profil siswa mengikuti data master Administrator. Jika ada data yang salah, hubungi wali kelas atau administrator.</div>` : `
+      ${readOnlyProfile ? `<div class="readonly-profile-note">${user.role === "wali_murid" ? "Profil wali murid hanya untuk memantau anak yang dipilih. Jika ingin mengganti anak, keluar lalu login dengan nama siswa lain." : "Profil siswa mengikuti data master Administrator. Jika ada data yang salah, hubungi wali kelas atau administrator."}</div>` : `
       <form id="profile-form" class="form-grid">
         <label>Nama<input name="name" value="${escapeHtml(user.name)}" required></label>
         <label>Role<input value="${escapeHtml(roles[user.role] || user.role)}" disabled></label>

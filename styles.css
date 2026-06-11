@@ -3870,6 +3870,37 @@ tr:hover td {
   background: rgba(23, 23, 23, .28) !important;
 }
 
+.parent-choice-list {
+  display: grid;
+  gap: 12px;
+}
+
+.parent-choice-card {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 16px;
+  text-align: left;
+  background: #fff !important;
+  border: 1px solid #e3e0da !important;
+  border-radius: 18px;
+  color: #171717 !important;
+  box-shadow: none !important;
+}
+
+.parent-choice-card strong {
+  font-size: 18px;
+}
+
+.parent-choice-card span,
+.parent-choice-card small {
+  color: #5f5f5b;
+}
+
+.parent-dashboard .summary-grid .card strong .badge {
+  font-size: 14px;
+}
+
 .scanner-popup > div:first-child,
 .scanner-area,
 .camera-panel {

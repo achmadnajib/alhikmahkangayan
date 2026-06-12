@@ -2382,7 +2382,7 @@ function recordsForSelectedYear(records = state.db.attendance_records) {
 }
 
 function schedulesForSelectedYear(schedules = state.db.schedules) {
-  const rows = schedules.filter(schedule => schedule.academic_year_id === selectedAcademicYearId());
+  const rows = schedules.filter(schedule => !schedule.deleted_at && schedule.academic_year_id === selectedAcademicYearId() && !isDeletedScheduleContext(schedule));
   const classIds = new Set(classesForSelectedYear().map(cls => cls.id));
   return activeUnit() ? rows.filter(schedule => classIds.has(schedule.class_id)) : rows;
 }
@@ -2815,7 +2815,7 @@ function visibleRows(table) {
     rows = rows.filter(r => classIds.has(r.class_id));
   }
   if (table === "leave_requests" && user.role === "guru") {
-    const classIds = new Set(state.db.schedules.filter(s => s.teacher_id === user.teacher_id).map(s => s.class_id));
+    const classIds = new Set(state.db.schedules.filter(s => !s.deleted_at && s.teacher_id === user.teacher_id).map(s => s.class_id));
     rows = rows.filter(r => classIds.has(r.class_id));
   }
   if (table === "schedules" && user.role === "guru") rows = rows.filter(r => r.teacher_id === user.teacher_id);
@@ -3045,7 +3045,7 @@ function validateRecord(table, data, row) {
     }
     if (currentUser().role === "wali_kelas" && !canApproveLeaveFor(data.class_id)) return toast("Wali kelas hanya boleh mengelola izin kelas binaannya.", "error"), false;
     if (currentUser().role === "guru") {
-      const classIds = new Set(state.db.schedules.filter(s => s.teacher_id === currentUser().teacher_id).map(s => s.class_id));
+      const classIds = new Set(state.db.schedules.filter(s => !s.deleted_at && s.teacher_id === currentUser().teacher_id).map(s => s.class_id));
       if (!classIds.has(data.class_id)) return toast("Guru hanya boleh membuat pengajuan izin untuk kelas yang diajar.", "error"), false;
     }
   }
@@ -3201,7 +3201,7 @@ function renderAttendance() {
   const user = currentUser();
   const teacher = state.db.teachers.find(t => t.id === user.teacher_id);
   const day = dayName(new Date());
-  let schedules = schedulesForSelectedYear().filter(s => s.active !== "false" && s.day === day);
+  let schedules = schedulesForSelectedYear().filter(s => !s.deleted_at && s.active !== "false" && s.day === day && !isDeletedScheduleContext(s));
   if (user.role === "guru" && teacher) schedules = schedules.filter(s => s.teacher_id === teacher.id);
   byId("view").innerHTML = `
     <section class="panel">
@@ -3232,7 +3232,16 @@ function scheduleRow(s) {
 }
 
 function todaySessionForSchedule(scheduleId) {
-  return state.db.attendance_sessions.find(x => x.schedule_id === scheduleId && x.date === today() && x.status !== "cancelled");
+  const schedule = findById("schedules", scheduleId);
+  if (!schedule || schedule.deleted_at || isDeletedScheduleContext(schedule)) return null;
+  return state.db.attendance_sessions.find(x => !x.deleted_at && x.schedule_id === scheduleId && x.date === today() && x.status !== "cancelled");
+}
+
+function isDeletedScheduleContext(schedule = {}) {
+  const cls = findById("classes", schedule.class_id);
+  const teacher = findById("teachers", schedule.teacher_id);
+  const subject = findById("subjects", schedule.subject_id);
+  return !cls || cls.deleted_at || !teacher || teacher.deleted_at || teacher.active === "false" || !subject || subject.deleted_at || subject.active === "false";
 }
 
 function renderHistory() {
@@ -4541,13 +4550,8 @@ function bindClassStudentActions(classId) {
     button.onclick = () => {
       const student = findById("students", button.dataset.deleteClassStudent);
       if (!student || !confirm(`Hapus siswa ${student.name}?`)) return;
-      student.deleted_at = now();
-      student.deleted_by = currentUser().id;
-      const linkedUser = state.db.users.find(user => user.student_id === student.id);
-      if (linkedUser) {
-        linkedUser.active = "false";
-        linkedUser.updated_at = now();
-      }
+      markDeleted(student);
+      cascadeSoftDelete("students", student);
       saveDb();
       closeModal({ fromPopState: true });
       openClassStudents(classId);
@@ -4734,8 +4738,8 @@ function openClassDaySchedules(classId, day) {
     button.onclick = () => {
       const schedule = findById("schedules", button.dataset.deleteSchedule);
       if (!schedule) return;
-      schedule.deleted_at = now();
-      schedule.deleted_by = currentUser().id;
+      markDeleted(schedule);
+      cascadeSoftDelete("schedules", schedule);
       saveDb();
       closeModal({ fromPopState: true });
       openClassDaySchedules(classId, day);
@@ -4961,8 +4965,82 @@ function fallbackQr(token) {
 function softDelete(table, id) {
   if (!confirm("Hapus data ini? Data penting ditandai soft delete.")) return;
   const row = findById(table, id);
-  row.deleted_at = now(); row.deleted_by = currentUser().id;
-  saveDb(); renderCrud(table); toast("Data dihapus.", "ok");
+  if (!row) return toast("Data tidak ditemukan.", "error");
+  markDeleted(row);
+  cascadeSoftDelete(table, row);
+  saveDb(); renderCrud(table); toast("Data dihapus dan akses terkait dinonaktifkan.", "ok");
+}
+
+function markDeleted(row) {
+  row.deleted_at = now();
+  row.deleted_by = currentUser().id;
+  row.updated_at = now();
+}
+
+function cascadeSoftDelete(table, row) {
+  if (table === "students") {
+    row.status = "keluar";
+    row.login_enabled = "false";
+    disableLinkedUser("student_id", row.id);
+    state.db.student_class_histories.forEach(history => {
+      if (history.student_id === row.id && history.status === "aktif") {
+        history.status = "selesai";
+        history.end_date = history.end_date || today();
+        history.updated_at = now();
+      }
+    });
+    return;
+  }
+  if (table === "classes") {
+    state.db.schedules.filter(schedule => schedule.class_id === row.id && !schedule.deleted_at).forEach(schedule => {
+      markDeleted(schedule);
+      closeSessionsForSchedule(schedule.id);
+    });
+    state.db.students.filter(student => student.active_class_id === row.id && !student.deleted_at).forEach(student => {
+      markDeleted(student);
+      student.active_class_id = "";
+      student.status = "keluar";
+      student.login_enabled = "false";
+      disableLinkedUser("student_id", student.id);
+    });
+    state.db.student_class_histories.forEach(history => {
+      if (history.class_id === row.id && history.status === "aktif") {
+        history.status = "selesai";
+        history.end_date = history.end_date || today();
+        history.updated_at = now();
+      }
+    });
+    return;
+  }
+  if (table === "schedules") {
+    closeSessionsForSchedule(row.id);
+    return;
+  }
+  if (table === "teachers") {
+    disableLinkedUser("teacher_id", row.id);
+    state.db.schedules.filter(schedule => schedule.teacher_id === row.id && !schedule.deleted_at).forEach(schedule => {
+      markDeleted(schedule);
+      closeSessionsForSchedule(schedule.id);
+    });
+    return;
+  }
+  if (table === "subjects") {
+    state.db.schedules.filter(schedule => schedule.subject_id === row.id && !schedule.deleted_at).forEach(schedule => {
+      markDeleted(schedule);
+      closeSessionsForSchedule(schedule.id);
+    });
+  }
+}
+
+function closeSessionsForSchedule(scheduleId) {
+  state.db.attendance_sessions
+    .filter(session => session.schedule_id === scheduleId && !session.deleted_at && session.status !== "cancelled")
+    .forEach(session => {
+      session.status = "cancelled";
+      session.closed_by = currentUser().id;
+      session.closed_at = now();
+      session.updated_at = now();
+    });
 }
 
 function exportCsv(name, rows, type = "") {

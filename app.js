@@ -2468,7 +2468,7 @@ function filterBySelectedAcademicYear(table, rows) {
 }
 
 function classesForSelectedYear() {
-  return filterClassesForRole(state.db.classes.filter(cls => !cls.deleted_at && cls.academic_year_id === selectedAcademicYearId()));
+  return filterClassesForRole(state.db.classes.filter(cls => !cls.deleted_at && cls.active !== "false" && cls.status !== "lulus" && cls.academic_year_id === selectedAcademicYearId()));
 }
 
 function recordsForSelectedYear(records = state.db.attendance_records) {
@@ -2590,6 +2590,7 @@ function classManagementCard(cls) {
         <option value="">Aksi Lainnya</option>
         <option value="semester">Kenaikan Semester</option>
         <option value="class">Kenaikan Kelas</option>
+        <option value="graduate">Luluskan Kelas</option>
         <option value="edit">Edit Kelas</option>
         <option value="delete">Hapus Kelas</option>
       </select>
@@ -2614,6 +2615,7 @@ function bindStudentClassOverview() {
     select.value = "";
     if (action === "semester") return openSemesterPromotion(classId);
     if (action === "class") return openClassPromotion(classId);
+    if (action === "graduate") return openGraduation(classId);
     if (action === "edit") return openForm("classes", findById("classes", classId));
     if (action === "delete") return softDelete("classes", classId);
   });
@@ -3336,7 +3338,7 @@ function isDeletedScheduleContext(schedule = {}) {
   const cls = findById("classes", schedule.class_id);
   const teacher = findById("teachers", schedule.teacher_id);
   const subject = findById("subjects", schedule.subject_id);
-  return !cls || cls.deleted_at || !teacher || teacher.deleted_at || teacher.active === "false" || !subject || subject.deleted_at || subject.active === "false";
+  return !cls || cls.deleted_at || cls.active === "false" || cls.status === "lulus" || !teacher || teacher.deleted_at || teacher.active === "false" || !subject || subject.deleted_at || subject.active === "false";
 }
 
 function renderHistory() {
@@ -4500,7 +4502,6 @@ function openSemesterPromotion(classId) {
   if (!source) return toast("Kelas tidak ditemukan.", "error");
   const nextSemester = nextSemesterForClass(source);
   if (!nextSemester) return toast("Semester berikutnya tidak ditemukan. Jika kelas sudah Genap, gunakan Kenaikan Kelas.", "error");
-  const target = findMatchingClass(source, nextSemester.id);
   const studentCount = studentsInClass(source.id).length;
   modal(`Kenaikan Semester ${escapeHtml(source.name)}`, `<form id="semester-promotion-form" class="form-grid">
     <div class="wide summary-grid">
@@ -4508,18 +4509,47 @@ function openSemesterPromotion(classId) {
       ${card("Ke Semester", escapeHtml(nextSemester.name))}
       ${card("Jumlah Siswa", studentCount)}
     </div>
-    <p class="wide muted">${target ? `Siswa akan dipindahkan ke kelas ${escapeHtml(displayName("classes", target))}.` : `Kelas semester ${escapeHtml(nextSemester.name)} belum ada. Sistem akan membuat kelas baru dengan nama, tingkat, jurusan, dan wali kelas yang sama.`}</p>
+    <p class="wide muted">Kelas tidak dibuat ulang. Sistem hanya mengganti semester aktif kelas ini, lalu menutup riwayat semester lama dan membuat riwayat aktif semester baru untuk siswa yang masih aktif.</p>
     <div class="wide actions"><button class="primary">Proses Kenaikan Semester</button><button class="ghost" type="button" data-close>Batal</button></div>
   </form>`);
   byId("semester-promotion-form").onsubmit = e => {
     e.preventDefault();
-    const targetClass = target || createClassForSemester(source, nextSemester.id);
-    const moved = promoteClassStudents(source.id, targetClass.id);
+    const moved = promoteClassSemester(source, nextSemester.id);
     saveDb();
     closeModal({ fromPopState: true });
     renderCrud("students");
-    toast(`${moved} siswa dipindahkan ke ${displayName("classes", targetClass)}.`, "ok");
+    toast(`${moved} siswa naik ke semester ${nextSemester.name}. Riwayat semester lama tetap tersimpan.`, "ok");
   };
+}
+
+function promoteClassSemester(cls, nextSemesterId) {
+  const nextSemester = findById("semesters", nextSemesterId);
+  if (!cls || !nextSemester) return 0;
+  const oldSemesterId = cls.semester_id;
+  const students = studentsInClass(cls.id);
+  cls.semester_id = nextSemester.id;
+  cls.academic_year_id = nextSemester.academic_year_id || cls.academic_year_id;
+  cls.updated_at = now();
+  cls.updated_by = currentUser().id;
+  students.forEach(student => {
+    closeActiveStudentHistoryForSemester(student.id, cls.id, oldSemesterId);
+    student.active_class_id = cls.id;
+    student.active_academic_year_id = cls.academic_year_id;
+    student.status = "aktif";
+    student.updated_at = now();
+    ensureActiveStudentHistory(student, cls);
+  });
+  return students.length;
+}
+
+function closeActiveStudentHistoryForSemester(studentId, classId, semesterId) {
+  state.db.student_class_histories.forEach(history => {
+    if (history.student_id === studentId && history.class_id === classId && history.semester_id === semesterId && history.status === "aktif") {
+      history.status = "selesai";
+      history.end_date = history.end_date || today();
+      history.updated_at = now();
+    }
+  });
 }
 
 function openClassPromotion(classId) {
@@ -4782,6 +4812,53 @@ function openClassLeaves(classId) {
     toast("Pengajuan dihapus.", "ok");
   });
   bindEvidenceLinks(root);
+}
+
+function openGraduation(classId) {
+  const source = findById("classes", classId);
+  if (!source) return toast("Kelas tidak ditemukan.", "error");
+  const students = studentsInClass(source.id);
+  modal(`Luluskan ${escapeHtml(source.name)}`, `<form id="graduation-form" class="form-grid">
+    <div class="wide summary-grid">
+      ${card("Kelas", escapeHtml(displayName("classes", source)))}
+      ${card("Siswa Aktif", students.length)}
+      ${card("Status Baru", "Lulus")}
+    </div>
+    <p class="wide muted">Semua siswa aktif di kelas ini akan berstatus lulus dan tidak masuk absensi aktif. Riwayat kelas, absensi, dan laporan lama tetap tersimpan.</p>
+    <div class="wide actions"><button class="primary">Luluskan Kelas</button><button class="ghost" type="button" data-close>Batal</button></div>
+  </form>`);
+  byId("graduation-form").onsubmit = e => {
+    e.preventDefault();
+    const count = graduateClass(source);
+    saveDb();
+    closeModal({ fromPopState: true });
+    renderCrud("students");
+    toast(`${count} siswa dinyatakan lulus.`, "ok");
+  };
+}
+
+function graduateClass(cls) {
+  const students = studentsInClass(cls.id);
+  students.forEach(student => {
+    student.status = "lulus";
+    student.login_enabled = "false";
+    student.updated_at = now();
+    disableLinkedUser("student_id", student.id);
+    state.db.student_class_histories.forEach(history => {
+      if (history.student_id === student.id && history.class_id === cls.id && history.status === "aktif") {
+        history.status = "lulus";
+        history.end_date = history.end_date || today();
+        history.updated_at = now();
+      }
+    });
+  });
+  cls.status = "lulus";
+  cls.active = "false";
+  cls.graduated_at = today();
+  cls.updated_at = now();
+  cls.updated_by = currentUser().id;
+  state.db.schedules.filter(schedule => schedule.class_id === cls.id && !schedule.deleted_at).forEach(schedule => closeSessionsForSchedule(schedule.id));
+  return students.length;
 }
 
 function openLeaveForClass(classId) {

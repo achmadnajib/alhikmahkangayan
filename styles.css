@@ -3942,6 +3942,31 @@ tr:hover td {
   min-width: 120px;
 }
 
+.session-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.session-status-detail {
+  margin-top: 12px;
+}
+
+.evidence-preview {
+  display: grid;
+  gap: 14px;
+}
+
+.evidence-preview img {
+  width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+  border: 1px solid #e3e0da;
+  border-radius: 14px;
+  background: #fff;
+}
+
 @media (max-width: 640px) {
   .parent-lesson-card {
     align-items: flex-start;

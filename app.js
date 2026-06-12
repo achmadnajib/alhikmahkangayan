@@ -366,8 +366,10 @@ async function loadDb() {
       const payload = await response.json();
       const localRaw = localStorage.getItem(DB_KEY);
       const sourceDb = payload.db || (localRaw ? JSON.parse(localRaw) : emptyDb());
+      const beforeNormalize = JSON.stringify(sourceDb);
       const db = normalizeDb(sourceDb);
       if (!payload.db) await persistRemoteDb(db);
+      else if (JSON.stringify(db) !== beforeNormalize) await persistRemoteDb(db);
       localStorage.setItem(DB_KEY, JSON.stringify(db));
       return db;
     }
@@ -387,6 +389,7 @@ function normalizeDb(db, persistLocal = false) {
   removeNonAdminEmails(db);
   normalizeTeacherRoles(db);
   normalizeLeaveRequests(db);
+  repairDeletedReferences(db);
   repairAdminRole(db);
   ensureStarterAccess(db);
   if (!db.students.length && !db.teachers.length) {
@@ -401,6 +404,55 @@ function removeNonAdminEmails(db) {
   db.teachers.forEach(t => delete t.email);
   db.users.forEach(u => {
     if (u.role !== "super_admin") delete u.email;
+  });
+}
+
+function repairDeletedReferences(db) {
+  db.students.forEach(student => {
+    if (student.deleted_at || student.status !== "aktif" || student.login_enabled === "false") {
+      student.login_enabled = "false";
+      db.users.filter(user => user.student_id === student.id).forEach(user => {
+        user.active = "false";
+        user.updated_at ||= now();
+      });
+      db.student_class_histories.forEach(history => {
+        if (history.student_id === student.id && history.status === "aktif") {
+          history.status = "selesai";
+          history.end_date ||= today();
+          history.updated_at ||= now();
+        }
+      });
+    }
+  });
+  db.teachers.forEach(teacher => {
+    if (teacher.deleted_at || teacher.active === "false" || teacher.login_enabled === "false") {
+      db.users.filter(user => user.teacher_id === teacher.id).forEach(user => {
+        user.active = "false";
+        user.updated_at ||= now();
+      });
+    }
+  });
+  db.classes.forEach(cls => {
+    if (!cls.deleted_at) return;
+    db.schedules.filter(schedule => schedule.class_id === cls.id && !schedule.deleted_at).forEach(schedule => {
+      schedule.deleted_at = schedule.deleted_at || now();
+      schedule.updated_at ||= now();
+    });
+    db.student_class_histories.forEach(history => {
+      if (history.class_id === cls.id && history.status === "aktif") {
+        history.status = "selesai";
+        history.end_date ||= today();
+        history.updated_at ||= now();
+      }
+    });
+  });
+  db.schedules.forEach(schedule => {
+    if (!schedule.deleted_at) return;
+    db.attendance_sessions.filter(session => session.schedule_id === schedule.id && session.status !== "cancelled").forEach(session => {
+      session.status = "cancelled";
+      session.closed_at ||= now();
+      session.updated_at ||= now();
+    });
   });
 }
 
@@ -704,18 +756,31 @@ function loadSession() { return JSON.parse(localStorage.getItem(SESSION_KEY) || 
 function saveSession(session) { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); state.session = session; }
 function validateStoredSession(session) {
   if (session?.role === "wali_murid") {
-    const student = state.db.students.find(item => item.id === session.murid_id && !item.deleted_at);
+    const student = state.db.students.find(item => item.id === session.murid_id && !item.deleted_at && item.status === "aktif");
     if (student) return { ...session, nama_siswa: student.name };
     localStorage.removeItem(SESSION_KEY);
     return null;
   }
   if (!session?.userId) return null;
   const user = state.db.users.find(item => item.id === session.userId && item.active !== "false");
-  if (!user || !roles[session.role || user.role] || !canLoginAsRole(user, session.role || user.role)) {
+  if (!user || !roles[session.role || user.role] || !canLoginAsRole(user, session.role || user.role) || !linkedLoginTargetActive(user)) {
     localStorage.removeItem(SESSION_KEY);
     return null;
   }
   return session;
+}
+
+function linkedLoginTargetActive(user) {
+  if (!user || user.deleted_at || user.active === "false") return false;
+  if (user.student_id) {
+    const student = findById("students", user.student_id);
+    return !!student && !student.deleted_at && student.status === "aktif" && student.login_enabled !== "false";
+  }
+  if (user.teacher_id) {
+    const teacher = findById("teachers", user.teacher_id);
+    return !!teacher && !teacher.deleted_at && teacher.active !== "false" && teacher.login_enabled !== "false";
+  }
+  return true;
 }
 function now() { return new Date().toISOString(); }
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -746,7 +811,7 @@ function bindAuth() {
     const fd = formData(e.target);
     if (fd.role === "wali_murid") return handleParentLogin(fd.email);
     const user = findLoginUser(fd.role, fd.email);
-    const effectiveRole = user?.role === "super_admin" ? "super_admin" : fd.role === "guru" && user?.role === "wali_kelas" ? "wali_kelas" : fd.role;
+    const effectiveRole = user?.role === "super_admin" ? "super_admin" : fd.role;
     const needsPassword = loginNeedsPassword(effectiveRole);
     if (!user) return toast("Data tidak ditemukan. Periksa kembali nomor identitas Anda.", "error");
     if (user.active === "false") return toast("Akun Anda tidak aktif. Silakan hubungi admin sekolah.", "error");
@@ -871,20 +936,30 @@ function findLoginUser(role, identifier) {
     ) || null;
   }
   if (role === "siswa") {
-    const student = state.db.students.find(s => !s.deleted_at && [s.nisn, s.nis].some(item => String(item || "").toLowerCase() === value));
-    return student ? state.db.users.find(u => u.student_id === student.id) : null;
+    const student = state.db.students.find(s => !s.deleted_at && s.status === "aktif" && s.login_enabled !== "false" && [s.nisn, s.nis].some(item => String(item || "").toLowerCase() === value));
+    const user = student ? state.db.users.find(u => !u.deleted_at && u.active !== "false" && u.student_id === student.id) : null;
+    return user && linkedLoginTargetActive(user) ? user : null;
   }
   if (["guru", "wali_kelas", "kepala_sekolah"].includes(role)) {
     if (role === "kepala_sekolah" && value.includes("@")) {
       return state.db.users.find(u => u.role === "super_admin" && u.email?.toLowerCase() === value) || null;
     }
-    const teacher = state.db.teachers.find(t => teacherIdentityMatches(t, value) && !t.deleted_at);
-    const linked = teacher ? state.db.users.find(u => u.teacher_id === teacher.id && u.role === role) : null;
-    if (linked) return linked;
-    if (role === "guru" && teacher) {
-      return state.db.users.find(u => u.teacher_id === teacher.id && u.role === "wali_kelas") || null;
+    const teacher = state.db.teachers.find(t => teacherIdentityMatches(t, value) && !t.deleted_at && t.active !== "false" && t.login_enabled !== "false");
+    if (!teacher) return null;
+    const linkedUsers = state.db.users.filter(u => !u.deleted_at && u.active !== "false" && u.teacher_id === teacher.id);
+    const linked = linkedUsers.find(u => u.role === role) || linkedUsers[0] || null;
+    if (role === "wali_kelas") {
+      const homeroom = teacher.is_homeroom === "true" || state.db.classes.some(cls => !cls.deleted_at && cls.homeroom_teacher_id === teacher.id);
+      return homeroom && linked && linkedLoginTargetActive(linked) ? linked : null;
     }
-    if (role === "kepala_sekolah") return state.db.users.find(u => u.role === "kepala_sekolah" && [u.nip, u.identity_number].some(item => String(item || "").toLowerCase() === value));
+    if (role === "guru") {
+      const teaches = state.db.schedules.some(schedule => !schedule.deleted_at && schedule.teacher_id === teacher.id);
+      return teaches && linked && linkedLoginTargetActive(linked) ? linked : null;
+    }
+    if (role === "kepala_sekolah") {
+      const user = linkedUsers.find(u => u.role === "kepala_sekolah") || state.db.users.find(u => !u.deleted_at && u.active !== "false" && u.role === "kepala_sekolah" && [u.nip, u.identity_number].some(item => String(item || "").toLowerCase() === value));
+      return user && linkedLoginTargetActive(user) ? user : null;
+    }
   }
   return null;
 }
@@ -896,7 +971,13 @@ function teacherIdentityMatches(teacher, value) {
 
 function canLoginAsRole(user, role) {
   if (user.role === role) return true;
-  return role === "guru" && user.role === "wali_kelas";
+  if (user.teacher_id && ["guru", "wali_kelas"].includes(role)) {
+    const teacher = findById("teachers", user.teacher_id);
+    if (!teacher || teacher.deleted_at || teacher.active === "false") return false;
+    if (role === "wali_kelas") return teacher.is_homeroom === "true" || state.db.classes.some(cls => !cls.deleted_at && cls.homeroom_teacher_id === teacher.id);
+    return state.db.schedules.some(schedule => !schedule.deleted_at && schedule.teacher_id === teacher.id);
+  }
+  return false;
 }
 
 function bindShell() {
@@ -1059,10 +1140,22 @@ function runNotificationJobs() {
   if (!state.db || !state.session) return;
   const user = currentUser();
   if (!user) return;
+  autoClosePastOpenSessions();
   createScheduleNotificationsForUser(user);
   createLeaveNotificationsForUser(user);
   createMeetingNotificationsForUser(user);
   updateMobileSchoolBar();
+}
+
+function autoClosePastOpenSessions() {
+  let changed = false;
+  state.db.attendance_sessions
+    .filter(session => !session.deleted_at && session.status === "open" && session.date === today())
+    .forEach(session => {
+      const schedule = findById("schedules", session.schedule_id);
+      if (scheduleTimingState(schedule) === "past" && processSessionClosure(session, { silent: true })) changed = true;
+    });
+  if (changed) saveDb();
 }
 
 function createScheduleNotificationsForUser(user) {
@@ -1865,6 +1958,7 @@ function renderParentLeaveAdmin() {
     </section>`;
   byId("view").querySelectorAll("[data-approve]").forEach(button => button.onclick = () => approveLeave(button.dataset.approve));
   byId("view").querySelectorAll("[data-reject]").forEach(button => button.onclick = () => openRejectLeave(button.dataset.reject));
+  bindEvidenceLinks(byId("view"));
 }
 
 function openParentLeaveForm() {
@@ -2769,6 +2863,7 @@ function bindCrud(table) {
   root.querySelectorAll("[data-manage-class]").forEach(b => b.onclick = () => openClassStudents(b.dataset.manageClass));
   root.querySelectorAll("[data-approve]").forEach(b => b.onclick = () => approveLeave(b.dataset.approve));
   root.querySelectorAll("[data-reject]").forEach(b => b.onclick = () => openRejectLeave(b.dataset.reject));
+  bindEvidenceLinks(root);
 }
 
 function visibleRows(table) {
@@ -3419,6 +3514,7 @@ function renderSession(sessionId) {
   autoCloseSessionIfPast(session, { silent: true });
   const canScanNow = session.status === "open" && canOpenScheduleNow(schedule);
   const sessionNote = session.status === "open" && scheduleTimingState(schedule) === "past" ? "Jam pelajaran sudah lewat. Tutup sesi untuk memproses alfa." : statusText(session.status);
+  const statusCards = sessionStatusCards(session);
   modal(`${displayName("classes", findById("classes", session.class_id))} - ${displayName("subjects", findById("subjects", session.subject_id))}`, `
     <section class="scan-popup-panel">
       <div class="scan-popup-head">
@@ -3436,11 +3532,52 @@ function renderSession(sessionId) {
           ${canScanNow ? `<button class="secondary" data-manual>Input Manual</button>` : ""}
         </div>
       </div>
+      <div class="session-status-grid">${statusCards}</div>
+      <div id="session-status-detail" class="session-status-detail">${sessionStatusDetail(session, "belum")}</div>
     </section>`);
   const root = byId("modal-backdrop");
   root.querySelector("[data-scan-token]")?.addEventListener("click", () => scanToken(session.id, byId("qr-token-input").value.trim()));
   root.querySelector("[data-manual]")?.addEventListener("click", () => openManualAttendance(session.id));
+  root.querySelectorAll("[data-session-status]").forEach(button => {
+    button.onclick = () => {
+      root.querySelector("#session-status-detail").innerHTML = sessionStatusDetail(session, button.dataset.sessionStatus);
+    };
+  });
   if (canScanNow) startCamera(session.id);
+}
+
+function sessionStatusRows(session) {
+  const records = state.db.attendance_records.filter(record => !record.deleted_at && record.session_id === session.id);
+  const byStudent = new Map(records.map(record => [record.student_id, record]));
+  return studentsInClass(session.class_id).map(student => {
+    const record = byStudent.get(student.id);
+    return { student, record, status: record?.status || "belum" };
+  });
+}
+
+function sessionStatusCards(session) {
+  const rows = sessionStatusRows(session);
+  return ["hadir", "terlambat", "izin", "sakit", "alfa", "belum"].map(status => {
+    const count = rows.filter(row => row.status === status).length;
+    return `<button type="button" class="status-stat-card" data-session-status="${status}">
+      <span>${escapeHtml(statusLabels[status] || titleCase(status))}</span>
+      <strong>${count}</strong>
+    </button>`;
+  }).join("");
+}
+
+function sessionStatusDetail(session, status = "belum") {
+  const rows = sessionStatusRows(session).filter(row => row.status === status);
+  const body = rows.map((row, index) => `<tr>
+    <td>${index + 1}</td>
+    <td>${escapeHtml(row.student.name || "-")}</td>
+    <td>${escapeHtml(row.student.nis || "-")}</td>
+    <td>${escapeHtml(row.record?.scan_time || "-")}</td>
+    <td>${badge(row.status)}</td>
+  </tr>`).join("");
+  return `<div class="table-wrap compact-table">
+    <table><thead><tr><th>No</th><th>Siswa</th><th>NIS</th><th>Jam</th><th>Status</th></tr></thead><tbody>${body || emptyRow(5)}</tbody></table>
+  </div>`;
 }
 
 function scanToken(sessionId, token) {
@@ -3550,9 +3687,9 @@ function scheduleConflict(data, row = null) {
   return "";
 }
 
-function processSessionClosure(session) {
+function processSessionClosure(session, options = {}) {
   if (isHoliday(session.date)) {
-    toast("Hari libur tidak diproses menjadi alfa.", "warn");
+    if (!options.silent) toast("Hari libur tidak diproses menjadi alfa.", "warn");
     return false;
   }
   studentsInClass(session.class_id).forEach(st => {
@@ -4644,6 +4781,7 @@ function openClassLeaves(classId) {
     openClassLeaves(classId);
     toast("Pengajuan dihapus.", "ok");
   });
+  bindEvidenceLinks(root);
 }
 
 function openLeaveForClass(classId) {
@@ -5325,7 +5463,21 @@ function findById(table, id) { return state.db[table].find(r => r.id === id); }
 function refName(table) { return id => escapeHtml(displayName(table, findById(table, id)) || "-"); }
 function evidenceLink(value) {
   if (!value) return "-";
-  return `<a class="evidence-link" href="${escapeHtml(value)}" target="_blank" rel="noopener">Lihat</a>`;
+  return `<button type="button" class="ghost evidence-link" data-evidence="${escapeHtml(value)}">Lihat Bukti</button>`;
+}
+
+function bindEvidenceLinks(root = document) {
+  root.querySelectorAll("[data-evidence]").forEach(button => {
+    button.onclick = () => showEvidencePreview(button.dataset.evidence);
+  });
+}
+
+function showEvidencePreview(value) {
+  if (!value) return toast("Bukti tidak tersedia.", "warn");
+  const isImage = String(value).startsWith("data:image/") || /\.(png|jpe?g|webp|gif)$/i.test(String(value).split("?")[0]);
+  modal("Bukti Pengajuan Izin", `<div class="evidence-preview">
+    ${isImage ? `<img src="${escapeHtml(value)}" alt="Bukti pengajuan izin">` : `<p class="muted">Bukti tersedia sebagai tautan.</p><a class="primary" href="${escapeHtml(value)}" target="_blank" rel="noopener">Buka Bukti</a>`}
+  </div>`);
 }
 function classSemesterName(classId) {
   const cls = findById("classes", classId);

@@ -1275,7 +1275,7 @@ function createScheduleNotificationsForUser(user) {
 
 function createLeaveNotificationsForUser(user) {
   if (user.role !== "wali_kelas") return;
-  const classIds = new Set(state.db.classes.filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
+  const classIds = new Set(classesForSelectedYear().filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
   state.db.leave_requests.filter(l => !l.deleted_at && l.status === "pending" && classIds.has(l.class_id)).forEach(leave => {
     addNotification(user.id, "Pengajuan izin menunggu", `${displayName("students", findById("students", leave.student_id))} mengajukan ${statusLabels[leave.leave_type] || leave.leave_type}.`, "leave-approval", leave.id);
   });
@@ -1455,7 +1455,7 @@ function adminMenuGroups() {
     { label: "Utama", items: [["dashboard", "Dashboard"], ["attendance", "Sesi & Scan QR"], ["history", "History"], ["reports", "Laporan"]] },
     { label: "Akademik", items: [["students", "Siswa & Kelas"], ["teachers", "Guru"], ["subjects", "Mapel & Jadwal"]] },
     { label: "Periode", items: [["periods", "Periode Akademik"]] },
-    { label: "Sistem", items: [["leave_requests", "Izin & Sakit"], ["parent_leave_requests", "Pengajuan Izin Wali"], ["meetings", "Rapat"], ["audit_logs", "Audit Sistem"], ["users", "Pengguna & Role"], ["settings", "Pengaturan"], ["profile", "Profil Saya"]] }
+    { label: "Sistem", items: [["leave_requests", "Izin & Sakit"], ["parent_leave_requests", "Pengajuan Izin Wali"], ["meetings", "Rapat"], ["audit_logs", "Audit Sistem"], ["users", "Akses Login"], ["settings", "Pengaturan"], ["profile", "Profil Saya"]] }
   ];
 }
 
@@ -1478,7 +1478,7 @@ function menuItemsForCurrentUser() {
     ["meetings", "Rapat", user.role === "kepala_sekolah"],
     ["reports", "Laporan", canReport()],
     ["audit_logs", "Audit Sistem", ["super_admin", "kepala_sekolah"].includes(user.role)],
-    ["users", "Pengguna & Role", user.role === "super_admin"],
+    ["users", "Akses Login", user.role === "super_admin"],
     ["settings", "Pengaturan", canEditMaster()],
     ["profile", "Profil Saya", user.role !== "super_admin"]
   ].filter(i => i[2]);
@@ -1530,7 +1530,7 @@ function navigate(page, options = {}) {
   if (!options.replaceHistory) pushAppHistory(page);
   document.querySelector(".sidebar").classList.remove("open");
   renderMenu();
-  const titles = { dashboard: "Dashboard", attendance: "Scan", history: "History", subjects: "Mapel & Jadwal", reports: "Reports", users: "Pengguna & Role", profile: "Profile", periods: "Periode Akademik", audit_logs: "Audit Sistem", leave_requests: "Izin & Sakit", parent_leave_requests: "Pengajuan Izin Wali" };
+  const titles = { dashboard: "Dashboard", attendance: "Scan", history: "History", subjects: "Mapel & Jadwal", reports: "Reports", users: "Akses Login", profile: "Profile", periods: "Periode Akademik", audit_logs: "Audit Sistem", leave_requests: "Izin & Sakit", parent_leave_requests: "Pengajuan Izin Wali" };
   const schema = schemas[page];
   byId("page-title").textContent = titles[page] || schema?.title || "Aplikasi";
   byId("page-subtitle").textContent = page === "attendance" ? "Buka jadwal aktif terlebih dahulu sebelum scan QR siswa." : "";
@@ -2326,15 +2326,16 @@ function renderHomeroomDashboard() {
   const teacher = state.db.teachers.find(t => t.id === user.teacher_id);
   const classes = classesForSelectedYear().filter(c => c.homeroom_teacher_id === teacher?.id);
   const ids = new Set(classes.map(c => c.id));
-  const students = state.db.students.filter(s => ids.has(s.active_class_id) && s.status === "aktif");
+  const students = visibleRows("students").filter(s => ids.has(s.active_class_id));
   const records = recordsForSelectedYear().filter(r => ids.has(r.class_id));
   const totals = attendanceTotals(records);
-  const todaySchedules = state.db.schedules
-    .filter(s => !s.deleted_at && s.active !== "false" && ids.has(s.class_id) && s.day === dayName(new Date()))
+  const pendingLeaves = visibleRows("leave_requests").filter(l => ids.has(l.class_id) && l.status === "pending");
+  const todaySchedules = schedulesForSelectedYear()
+    .filter(s => s.active !== "false" && ids.has(s.class_id) && s.day === dayName(new Date()))
     .sort((a, b) => timeToMinutes(a.start_time) - timeToMinutes(b.start_time));
   byId("view").innerHTML = `
     <section class="mobile-dashboard">
-      <article class="session-hero"><span>Homeroom</span><h2>${escapeHtml(classes.map(c => c.name).join(", ") || "Belum Ada Kelas")}</h2><div><b>♙</b> ${students.length} siswa aktif <b>▣</b> ${state.db.leave_requests.filter(l => ids.has(l.class_id) && l.status === "pending").length} izin menunggu</div></article>
+      <article class="session-hero"><span>Homeroom</span><h2>${escapeHtml(classes.map(c => c.name).join(", ") || "Belum Ada Kelas")}</h2><div><b>♙</b> ${students.length} siswa aktif <b>▣</b> ${pendingLeaves.length} izin menunggu</div></article>
       <div class="mini-stats">
         ${dashboardStatusCard("hadir", totals.hadir)}
         ${dashboardStatusCard("terlambat", totals.terlambat)}
@@ -2361,8 +2362,8 @@ function renderHeadmasterDashboard() {
   const todaySchedules = schedulesForSelectedYear().filter(s => !s.deleted_at && s.active !== "false" && s.day === dayName(new Date()));
   byId("view").innerHTML = `
     <section class="cards">
-      ${card("Siswa Aktif", visibleRows("students").filter(s => s.status === "aktif").length)}
-      ${card("Guru Aktif", visibleRows("teachers").filter(t => t.active !== "false").length)}
+      ${card("Siswa Aktif", visibleRows("students").length)}
+      ${card("Guru Aktif", visibleRows("teachers").length)}
       ${card("Kelas", classesForSelectedYear().length)}
       ${card("Kehadiran", `${pct}%`)}
     </section>
@@ -2972,7 +2973,7 @@ function visibleRows(table) {
   if (table === "teachers") rows = rows.filter(teacherCanLogin);
   if (table === "classes") rows = filterClassesForRole(rows);
   if (table === "classes" && user.role === "guru") {
-    const classIds = new Set(state.db.schedules.filter(s => !s.deleted_at && s.teacher_id === user.teacher_id).map(s => s.class_id));
+    const classIds = new Set(schedulesForSelectedYear().filter(s => s.teacher_id === user.teacher_id).map(s => s.class_id));
     rows = rows.filter(cls => classIds.has(cls.id));
   }
   if (table === "classes" && user.role === "wali_kelas") {
@@ -3001,15 +3002,15 @@ function visibleRows(table) {
     rows = rows.filter(r => r.student_id === user.murid_id);
   }
   if (table === "students" && user.role === "wali_kelas") {
-    const classIds = new Set(state.db.classes.filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
+    const classIds = new Set(classesForSelectedYear().filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
     rows = rows.filter(r => classIds.has(r.active_class_id));
   }
   if (table === "leave_requests" && user.role === "wali_kelas") {
-    const classIds = new Set(state.db.classes.filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
+    const classIds = new Set(classesForSelectedYear().filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
     rows = rows.filter(r => classIds.has(r.class_id));
   }
   if (table === "leave_requests" && user.role === "guru") {
-    const classIds = new Set(state.db.schedules.filter(s => !s.deleted_at && s.teacher_id === user.teacher_id).map(s => s.class_id));
+    const classIds = new Set(schedulesForSelectedYear().filter(s => s.teacher_id === user.teacher_id).map(s => s.class_id));
     rows = rows.filter(r => classIds.has(r.class_id));
   }
   if (table === "schedules" && user.role === "guru") rows = rows.filter(r => r.teacher_id === user.teacher_id);
@@ -3543,7 +3544,7 @@ function scopedAttendanceRecords() {
   if (user.role === "siswa") return rows.filter(r => r.student_id === user.student_id);
   if (user.role === "guru") return rows.filter(r => r.teacher_id === user.teacher_id);
   if (user.role === "wali_kelas") {
-    const classIds = new Set(state.db.classes.filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
+    const classIds = new Set(classesForSelectedYear().filter(c => c.homeroom_teacher_id === user.teacher_id).map(c => c.id));
     return rows.filter(r => classIds.has(r.class_id));
   }
   return rows.slice();
@@ -4100,12 +4101,13 @@ function filteredRecords() {
 }
 
 function teacherMatchesHeadmasterUnit(teacher, unit = headmasterUnit()) {
-  if (!teacher || !unit) return true;
+  if (!unit) return true;
+  if (!teacherCanLogin(teacher)) return false;
   if (headmasterUnits(teacher).includes(unit)) return true;
   if (String(teacher.unit || "").toUpperCase() === unit) return true;
   const classIds = new Set(classesForSelectedYear().filter(cls => classUnit(cls) === unit).map(cls => cls.id));
-  if (state.db.classes.some(cls => !cls.deleted_at && cls.homeroom_teacher_id === teacher.id && classIds.has(cls.id))) return true;
-  return state.db.schedules.some(schedule => !schedule.deleted_at && schedule.teacher_id === teacher.id && classIds.has(schedule.class_id));
+  if (classesForSelectedYear().some(cls => cls.homeroom_teacher_id === teacher.id && classIds.has(cls.id))) return true;
+  return schedulesForSelectedYear().some(schedule => schedule.teacher_id === teacher.id && classIds.has(schedule.class_id));
 }
 
 function attendanceMatrixReport() {
@@ -4118,7 +4120,7 @@ function attendanceMatrixReport() {
   const classIds = classId ? [classId] : [...new Set(records.map(r => r.class_id).filter(Boolean))];
   let students = classId
     ? studentsInClass(classId)
-    : state.db.students.filter(s => !s.deleted_at && classIds.includes(s.active_class_id));
+    : activeStudentsForSelectedYear().filter(s => classIds.includes(s.active_class_id));
   if (!students.length) {
     const ids = [...new Set(records.map(r => r.student_id).filter(Boolean))];
     students = ids.map(id => findById("students", id)).filter(Boolean);
@@ -4436,19 +4438,74 @@ function crc32(bytes) {
 }
 
 function renderUsers() {
-  const cards = state.db.users
-    .filter(user => !user.deleted_at)
-    .map(user => userRoleCard(user))
-    .join("");
+  const access = loginAccessSummary();
   byId("view").innerHTML = `<section class="panel admin-workflow">
     <div class="panel-head workflow-head">
-      <div><span class="eyebrow">Akses Pengguna</span><h2>Pengguna & Role</h2><p class="muted">Guru, wali kelas, kepala sekolah, dan siswa login memakai NIP/NISN dari data master.</p></div>
+      <div><span class="eyebrow">Kontrol Akses Login</span><h2>Akses Login</h2><p class="muted">Akses aktif disinkronkan langsung dari data master siswa, guru, wali kelas, kepala sekolah, dan administrator.</p></div>
       <div class="actions"><button class="primary" data-add-user>Tambah Administrator</button></div>
     </div>
-    <div class="role-card-grid">${cards || `<div class="empty-state">Belum ada pengguna.</div>`}</div>
+    <div class="workflow-stats">
+      ${card("Administrator", access.admins.length)}
+      ${card("Kepala Sekolah", access.headmasters.length)}
+      ${card("Guru", access.teachers.length)}
+      ${card("Wali Kelas", access.homerooms.length)}
+      ${card("Siswa", access.students.length)}
+      ${card("Akun Bermasalah", access.problemUsers.length)}
+    </div>
+    <div class="role-card-grid">
+      ${access.activeRows.map(loginAccessCard).join("") || `<div class="empty-state">Belum ada akses aktif dari data master.</div>`}
+    </div>
+    ${access.problemUsers.length ? `<section class="panel-subsection">
+      <div class="panel-head compact"><div><h3>Akun Bermasalah</h3><p class="muted">Akun berikut masih tersimpan untuk audit, tetapi master siswa/guru sudah tidak valid atau nonaktif.</p></div></div>
+      <div class="role-card-grid problem-grid">${access.problemUsers.map(userRoleCard).join("")}</div>
+    </section>` : ""}
   </section>`;
   byId("view").querySelector("[data-add-user]").onclick = () => openUserForm();
   byId("view").querySelectorAll("[data-user]").forEach(b => b.onclick = () => openUserForm(findById("users", b.dataset.user)));
+  byId("view").querySelectorAll("[data-edit-master]").forEach(b => {
+    b.onclick = () => {
+      const [table, id] = b.dataset.editMaster.split(":");
+      const row = findById(table, id);
+      if (!row) return toast("Data master tidak ditemukan.", "error");
+      if (table === "users") return openUserForm(row);
+      openForm(table, row);
+    };
+  });
+}
+
+function loginAccessSummary() {
+  const admins = state.db.users.filter(user => !user.deleted_at && user.role === "super_admin" && user.active !== "false");
+  const activeTeachers = activeTeachersForDisplay();
+  const headmasters = activeTeachers.filter(teacher => (teacher.staff_role || "") === "kepala_sekolah" || state.db.users.some(user => !user.deleted_at && user.active !== "false" && user.teacher_id === teacher.id && user.role === "kepala_sekolah"));
+  const homerooms = activeTeachers.filter(teacher => teacher.is_homeroom === "true" || classesForSelectedYear().some(cls => cls.homeroom_teacher_id === teacher.id));
+  const teacherRows = activeTeachers.filter(teacher => !headmasters.some(item => item.id === teacher.id) && !homerooms.some(item => item.id === teacher.id));
+  const students = activeStudentsForSelectedYear();
+  const activeRows = [
+    ...admins.map(user => ({ type: "user", role: "super_admin", title: user.name, identity: user.email || "-", status: "Aktif", edit: `users:${user.id}` })),
+    ...headmasters.map(teacher => ({ type: "teacher", role: "kepala_sekolah", title: teacher.name, identity: teacher.identity_number || teacher.nip || "-", status: "Aktif", edit: `teachers:${teacher.id}` })),
+    ...homerooms.map(teacher => ({ type: "teacher", role: "wali_kelas", title: teacher.name, identity: teacher.identity_number || teacher.nip || "-", status: "Aktif", edit: `teachers:${teacher.id}` })),
+    ...teacherRows.map(teacher => ({ type: "teacher", role: "guru", title: teacher.name, identity: teacher.identity_number || teacher.nip || "-", status: "Aktif", edit: `teachers:${teacher.id}` })),
+    ...students.map(student => ({ type: "student", role: "siswa", title: student.name, identity: student.nisn || student.nis || "-", status: displayName("classes", findById("classes", student.active_class_id)) || "Aktif", edit: `students:${student.id}` }))
+  ];
+  const validUserIds = new Set(admins.map(user => user.id));
+  state.db.users.filter(user => !user.deleted_at && user.student_id && studentCanLogin(findById("students", user.student_id))).forEach(user => validUserIds.add(user.id));
+  state.db.users.filter(user => !user.deleted_at && user.teacher_id && teacherCanLogin(findById("teachers", user.teacher_id))).forEach(user => validUserIds.add(user.id));
+  const problemUsers = state.db.users.filter(user => !user.deleted_at && user.role !== "super_admin" && !validUserIds.has(user.id));
+  return { admins, headmasters, teachers: teacherRows, homerooms, students, activeRows, problemUsers };
+}
+
+function loginAccessCard(row) {
+  return `<article class="role-card">
+    <div>
+      <span class="class-label">${escapeHtml(roles[row.role] || row.role)}</span>
+      <h3>${escapeHtml(row.title || "-")}</h3>
+      <p>${escapeHtml(row.identity || "-")}</p>
+    </div>
+    <div class="role-card-foot">
+      <span class="badge open">${escapeHtml(row.status || "Aktif")}</span>
+      <button class="ghost" data-edit-master="${escapeHtml(row.edit)}">Edit Master</button>
+    </div>
+  </article>`;
 }
 
 function userRoleCard(user) {
@@ -5746,7 +5803,7 @@ function reportRowsForFilter(name, table) {
   const unit = filters.unit || activeUnit();
   if (user.role === "guru") schedules = schedules.filter(schedule => schedule.teacher_id === user.teacher_id);
   if (user.role === "wali_kelas") {
-    const classIds = new Set(state.db.classes.filter(cls => cls.homeroom_teacher_id === user.teacher_id).map(cls => cls.id));
+    const classIds = new Set(classesForSelectedYear().filter(cls => cls.homeroom_teacher_id === user.teacher_id).map(cls => cls.id));
     schedules = schedules.filter(schedule => classIds.has(schedule.class_id));
   }
   if (unit) {
@@ -5834,7 +5891,13 @@ function subjectsForClass(classId) {
 }
 function approvedLeaveFor(studentId, date) { return state.db.leave_requests.find(l => l.student_id === studentId && l.status === "approved" && date >= l.start_date && date <= l.end_date); }
 function isHoliday(date) { return state.db.holidays.some(h => h.date === date && !h.deleted_at); }
-function isActiveRef(table, id) { const r = findById(table, id); return r && r.active !== "false"; }
+function isActiveRef(table, id) {
+  const r = findById(table, id);
+  if (!r || r.deleted_at || r.active === "false") return false;
+  if (table === "teachers") return teacherCanLogin(r);
+  if (table === "students") return studentCanLogin(r);
+  return true;
+}
 function logChange(record, oldStatus, newStatus, reason) { state.db.attendance_logs.push({ id: uid("log"), attendance_record_id: record.id, student_id: record.student_id, old_status: oldStatus, new_status: newStatus, changed_by: currentUser().id, reason, created_at: now() }); }
 function findById(table, id) { return state.db[table].find(r => r.id === id); }
 function refName(table) { return id => escapeHtml(displayName(table, findById(table, id)) || "-"); }

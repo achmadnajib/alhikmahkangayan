@@ -2306,6 +2306,7 @@ function rankingBadge(result, size = "normal") {
   const rank = Number(result?.rank || 0);
   const tier = rank === 1 ? "gold" : rank === 2 ? "silver" : rank === 3 ? "bronze" : rank <= 10 ? "top" : "base";
   return `<span class="rank-badge ${tier} ${size}">
+    <i aria-hidden="true"></i>
     <strong>#${escapeHtml(result?.rank || "-")}</strong>
     <small>${escapeHtml(result?.badge || rankingBadgeName(rank))}</small>
   </span>`;

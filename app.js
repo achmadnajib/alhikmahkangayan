@@ -3580,11 +3580,11 @@ function validateRecord(table, data, row) {
     const cls = findById("classes", data.active_class_id);
     if (cls && data.active_academic_year_id !== cls.academic_year_id) return toast("Tahun ajaran siswa harus sama dengan kelas aktif.", "error"), false;
     if (["kepala_sekolah", "guru", "wali_kelas"].includes(currentUser().role) && activeUnit() && (!cls || classUnit(cls) !== activeUnit())) return toast("Siswa hanya boleh disimpan pada unit aktif.", "error"), false;
-    const duplicateNisn = data.nisn ? state.db.students.find(s => !s.deleted_at && s.nisn === data.nisn && s.id !== row?.id) : null;
+    const duplicateNisn = data.nisn ? state.db.students.find(s => studentCanLogin(s) && s.nisn === data.nisn && s.id !== row?.id) : null;
     if (duplicateNisn) return toast("NISN sudah digunakan.", "error"), false;
     const duplicateNis = data.nis && cls ? state.db.students.find(s => {
       const otherClass = findById("classes", s.active_class_id);
-      return !s.deleted_at && s.nis === data.nis && s.id !== row?.id && otherClass && classUnit(otherClass) === classUnit(cls);
+      return studentCanLogin(s) && s.nis === data.nis && s.id !== row?.id && otherClass && classUnit(otherClass) === classUnit(cls);
     }) : null;
     if (duplicateNis) return toast("NIS sudah digunakan pada unit yang sama.", "error"), false;
   }

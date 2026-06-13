@@ -418,10 +418,15 @@ function removeNonAdminEmails(db) {
 }
 
 function repairDeletedReferences(db) {
+  const validYearIds = new Set(db.academic_years.filter(year => !year.deleted_at).map(year => year.id));
+  const validClassIds = new Set(db.classes.filter(cls => !cls.deleted_at && cls.active !== "false" && cls.status !== "lulus" && validYearIds.has(cls.academic_year_id)).map(cls => cls.id));
+  const validTeacherIds = new Set(db.teachers.filter(teacher => !teacher.deleted_at && teacher.active !== "false" && teacher.login_enabled !== "false").map(teacher => teacher.id));
+  const validSubjectIds = new Set(db.subjects.filter(subject => !subject.deleted_at && subject.active !== "false").map(subject => subject.id));
   db.students.forEach(student => {
     const hasValidPlacement = studentHasActivePlacement(student, db);
     if (student.deleted_at || student.status !== "aktif" || student.login_enabled === "false" || !hasValidPlacement) {
       student.login_enabled = "false";
+      if (!hasValidPlacement && student.status === "aktif") student.status = "keluar";
       db.users.filter(user => user.student_id === student.id).forEach(user => {
         user.active = "false";
         user.updated_at ||= now();
@@ -443,8 +448,21 @@ function repairDeletedReferences(db) {
       });
     }
   });
+  db.users.forEach(user => {
+    if (user.deleted_at || user.role === "super_admin") return;
+    if (user.student_id && !studentCanLoginWithDb(user.student_id, db)) {
+      user.active = "false";
+      user.updated_at ||= now();
+    }
+    if (user.teacher_id && !validTeacherIds.has(user.teacher_id)) {
+      user.active = "false";
+      user.updated_at ||= now();
+    }
+  });
   db.classes.forEach(cls => {
-    if (!cls.deleted_at) return;
+    if (!cls.deleted_at && validYearIds.has(cls.academic_year_id)) return;
+    cls.deleted_at ||= now();
+    cls.updated_at ||= now();
     db.schedules.filter(schedule => schedule.class_id === cls.id && !schedule.deleted_at).forEach(schedule => {
       schedule.deleted_at = schedule.deleted_at || now();
       schedule.updated_at ||= now();
@@ -458,12 +476,37 @@ function repairDeletedReferences(db) {
     });
   });
   db.schedules.forEach(schedule => {
-    if (!schedule.deleted_at) return;
+    const invalidContext = !validYearIds.has(schedule.academic_year_id) || !validClassIds.has(schedule.class_id) || !validTeacherIds.has(schedule.teacher_id) || !validSubjectIds.has(schedule.subject_id);
+    if (!schedule.deleted_at && !invalidContext) return;
+    schedule.deleted_at ||= now();
+    schedule.updated_at ||= now();
     db.attendance_sessions.filter(session => session.schedule_id === schedule.id && session.status !== "cancelled").forEach(session => {
       session.status = "cancelled";
       session.closed_at ||= now();
       session.updated_at ||= now();
     });
+  });
+  db.leave_requests.forEach(leave => {
+    const studentValid = studentCanLoginWithDb(leave.student_id, db);
+    const classValid = validClassIds.has(leave.class_id);
+    const yearValid = !leave.academic_year_id || validYearIds.has(leave.academic_year_id);
+    if (!leave.deleted_at && (!studentValid || !classValid || !yearValid)) {
+      leave.deleted_at = now();
+      leave.updated_at ||= now();
+    }
+  });
+  db.rank_periods.forEach(period => {
+    if (!period.deleted_at && (!validYearIds.has(period.academic_year_id) || !validClassIds.has(period.class_id))) {
+      period.deleted_at = now();
+      period.updated_at ||= now();
+    }
+  });
+  const validRankPeriodIds = new Set(db.rank_periods.filter(period => !period.deleted_at).map(period => period.id));
+  db.rank_results.forEach(result => {
+    if (!result.deleted_at && (!validRankPeriodIds.has(result.period_id) || !studentCanLoginWithDb(result.student_id, db))) {
+      result.deleted_at = now();
+      result.updated_at ||= now();
+    }
   });
 }
 
@@ -480,6 +523,11 @@ function studentHasActivePlacement(student, db = state.db) {
     history.semester_id === cls.semester_id &&
     history.status === "aktif"
   );
+}
+
+function studentCanLoginWithDb(studentOrId, db = state.db) {
+  const student = typeof studentOrId === "string" ? db.students?.find(item => item.id === studentOrId) : studentOrId;
+  return !!student && !student.deleted_at && student.status === "aktif" && student.login_enabled !== "false" && studentHasActivePlacement(student, db);
 }
 
 function normalizeLeaveRequests(db) {
@@ -5104,12 +5152,179 @@ function openUserForm(row = null) {
 
 function openImport(table) {
   modal(`Import CSV ${schemas[table].title}`, `<form id="import-form" class="form-grid"><label class="wide">CSV<textarea name="csv" required placeholder="Header harus sesuai nama field, contoh: name,email"></textarea></label><div class="wide actions"><button class="primary">Import</button><button class="ghost" type="button" data-close>Batal</button></div></form>`);
-  byId("import-form").onsubmit = e => {
+  byId("import-form").onsubmit = async e => {
     e.preventDefault();
     const rows = parseCsv(formData(e.target).csv);
-    rows.forEach(r => state.db[table].push({ id: uid(table.slice(0, 3)), ...r, created_at: now(), updated_at: now(), created_by: currentUser().id }));
-    saveDb(); closeModal({ fromPopState: true }); renderCrud(table); toast(`${rows.length} data diimport.`, "ok");
+    if (!rows.length) return toast("CSV tidak berisi data.", "error");
+    const imported = await importRowsSafely(table, rows);
+    if (!imported) return;
+    saveDb(); closeModal({ fromPopState: true }); renderCrud(table); toast(`${imported} data diimport dan disinkronkan.`, "ok");
   };
+}
+
+async function importRowsSafely(table, rows) {
+  const snapshot = JSON.stringify(state.db);
+  try {
+    let count = 0;
+    for (const [index, row] of rows.entries()) {
+      const record = importedRecordDefaults(table);
+      Object.entries(row).forEach(([key, value]) => {
+        const normalizedKey = importFieldKey(table, key);
+        if (normalizedKey) record[normalizedKey] = normalizeImportValue(normalizedKey, value);
+      });
+      resolveImportReferences(table, record);
+      const data = normalizeRecord(table, record, null);
+      if (!validateRecord(table, data, null)) throw new Error(`Baris ${index + 2} tidak valid.`);
+      const saved = { id: uid(table.slice(0, 3)), ...data, created_at: now(), updated_at: now(), created_by: currentUser().id };
+      state.db[table].push(saved);
+      await afterImportedRecordSaved(table, saved);
+      count += 1;
+    }
+    return count;
+  } catch (error) {
+    state.db = JSON.parse(snapshot);
+    console.error(error);
+    toast(error.message || "Import gagal. Tidak ada data yang disimpan.", "error");
+    return 0;
+  }
+}
+
+function importedRecordDefaults(table) {
+  const out = {};
+  schemas[table]?.fields?.forEach(([key, , type, , options]) => {
+    if (key === "academic_year_id" || key === "active_academic_year_id") out[key] = selectedAcademicYearId();
+    else if (type === "select") out[key] = options?.[0]?.[0] ?? "";
+    else out[key] = "";
+  });
+  return out;
+}
+
+function importFieldKey(table, key) {
+  const clean = String(key || "").trim();
+  if (!clean) return "";
+  const lower = clean.toLowerCase().replace(/\s+/g, "_");
+  const fields = new Set((schemas[table]?.fields || []).map(([field]) => field));
+  if (fields.has(clean)) return clean;
+  if (fields.has(lower)) return lower;
+  const aliases = {
+    siswa: "student_id",
+    nama_siswa: "name",
+    nama: table === "students" || table === "teachers" ? "name" : "",
+    jenis_kelamin: "gender",
+    tempat_lahir: "birth_place",
+    tanggal_lahir: "birth_date",
+    alamat: "address",
+    nama_ayah: "father_name",
+    nama_ibu: "mother_name",
+    nomor_hp_orang_tua: "parent_phone",
+    hp_orang_tua: "parent_phone",
+    akun_login: "login_enabled",
+    kelas: table === "students" ? "active_class_id" : "class_id",
+    tahun_ajaran: table === "students" ? "active_academic_year_id" : "academic_year_id",
+    tahun_ajaran_aktif: "active_academic_year_id",
+    semester: "semester_id",
+    guru: "teacher_id",
+    mapel: "subject_id",
+    mata_pelajaran: "subject_id",
+    mulai: "start_time",
+    selesai: "end_time",
+    tanggal_mulai: "start_date",
+    tanggal_selesai: "end_date",
+    jenis: "leave_type",
+    keterangan: "reason",
+    bukti: "attachment",
+    status_aktif: table === "students" ? "status" : "active",
+    nomor_identitas: "identity_number",
+    jabatan: "staff_role"
+  };
+  return fields.has(aliases[lower]) ? aliases[lower] : "";
+}
+
+function normalizeImportValue(key, value) {
+  const text = String(value ?? "").trim();
+  if (["active", "login_enabled", "is_active", "parent_portal"].includes(key)) {
+    if (/^(ya|y|aktif|true|1)$/i.test(text)) return "true";
+    if (/^(tidak|t|nonaktif|false|0)$/i.test(text)) return "false";
+  }
+  if (key === "status") {
+    const lower = text.toLowerCase();
+    if (["aktif", "pindah", "lulus", "keluar", "pending", "approved", "rejected", "cancelled"].includes(lower)) return lower;
+    if (lower === "menunggu") return "pending";
+    if (lower === "disetujui") return "approved";
+    if (lower === "ditolak") return "rejected";
+  }
+  if (key === "leave_type") {
+    const lower = text.toLowerCase();
+    if (lower.includes("sakit")) return "sakit";
+    if (lower.includes("izin")) return "izin";
+  }
+  if (key === "gender") {
+    if (/^(l|laki|laki-laki|pria)$/i.test(text)) return "L";
+    if (/^(p|perempuan|wanita)$/i.test(text)) return "P";
+  }
+  if (key === "staff_role") {
+    return /kepala/i.test(text) ? "kepala_sekolah" : "guru";
+  }
+  return text;
+}
+
+function resolveImportReferences(table, record) {
+  (schemas[table]?.fields || []).forEach(([key, , type]) => {
+    if (!type?.startsWith?.("ref:") || !record[key]) return;
+    const refTable = type.split(":")[1];
+    record[key] = resolveImportRef(refTable, record[key]) || record[key];
+  });
+  if (table === "students" && record.active_class_id) {
+    const cls = findById("classes", record.active_class_id);
+    if (cls) record.active_academic_year_id = cls.academic_year_id;
+  }
+  if (table === "classes" && record.academic_year_id && record.semester_id) {
+    const semester = findById("semesters", record.semester_id);
+    if (semester?.academic_year_id !== record.academic_year_id) record.semester_id = "";
+  }
+  if (table === "schedules" && record.class_id) {
+    const cls = findById("classes", record.class_id);
+    if (cls) {
+      record.academic_year_id = cls.academic_year_id;
+      record.semester_id = cls.semester_id;
+    }
+  }
+  if (table === "leave_requests" && record.class_id) {
+    const cls = findById("classes", record.class_id);
+    if (cls) {
+      record.academic_year_id = cls.academic_year_id;
+      record.semester_id = cls.semester_id;
+    }
+  }
+}
+
+function resolveImportRef(table, value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (findById(table, raw)) return raw;
+  const needle = raw.toLowerCase();
+  const rows = state.db[table]?.filter(row => !row.deleted_at) || [];
+  const exact = rows.find(row =>
+    [displayName(table, row), row.name, row.code, row.nis, row.nisn, row.nip, row.identity_number, row.email]
+      .some(item => String(item || "").toLowerCase() === needle)
+  );
+  if (exact) return exact.id;
+  const loose = rows.find(row => String(displayName(table, row) || row.name || "").toLowerCase().includes(needle));
+  return loose?.id || "";
+}
+
+async function afterImportedRecordSaved(table, saved) {
+  if (table === "students") {
+    syncStudentHistory(saved);
+    if (saved.login_enabled === "true") await syncStudentUser(saved);
+    else disableLinkedUser("student_id", saved.id);
+  }
+  if (table === "teachers") {
+    if (saved.login_enabled === "true") await syncTeacherUser(saved);
+    else disableLinkedUser("teacher_id", saved.id);
+  }
+  if (table === "leave_requests" && saved.status === "approved") applyApprovedLeave(saved);
+  if (table === "academic_years") rolloverAcademicYear(saved.id);
 }
 
 function openQrPrint() {
@@ -6121,6 +6336,7 @@ function fallbackQr(token) {
 }
 
 function softDelete(table, id, rerender = null) {
+  if (table === "academic_years") return deleteAcademicYearPermanently(id, rerender);
   if (!confirm("Hapus data ini? Data penting ditandai soft delete.")) return;
   const row = findById(table, id);
   if (!row) return toast("Data tidak ditemukan.", "error");
@@ -6130,6 +6346,96 @@ function softDelete(table, id, rerender = null) {
   if (rerender) rerender();
   else renderCrud(table);
   toast("Data dihapus dan akses terkait dinonaktifkan.", "ok");
+}
+
+function deleteAcademicYearPermanently(id, rerender = null) {
+  const year = findById("academic_years", id);
+  if (!year || year.deleted_at) return toast("Tahun ajaran tidak ditemukan.", "error");
+  const remainingYears = state.db.academic_years.filter(item => !item.deleted_at && item.id !== id);
+  if (!remainingYears.length) return toast("Tidak bisa menghapus satu-satunya tahun ajaran. Buat tahun ajaran lain terlebih dahulu.", "error");
+  const summary = academicYearDeleteSummary(id);
+  const label = displayName("academic_years", year);
+  const message = [
+    `Hapus permanen tahun ajaran ${label}?`,
+    "Data semester, kelas, jadwal, sesi, absensi, izin, dan peringkat pada tahun ini akan hilang dari database.",
+    "Data master siswa/guru tidak dihapus, tetapi akun siswa yang tidak punya kelas aktif lain akan dinonaktifkan.",
+    `Ringkasan: ${summary.classes} kelas, ${summary.students} siswa terdampak, ${summary.records} absensi, ${summary.sessions} sesi.`
+  ].join("\n\n");
+  if (!confirm(message)) return;
+  const typed = prompt(`Ketik ${label} untuk konfirmasi hapus permanen tahun ajaran.`);
+  if (typed !== label) return toast("Konfirmasi tidak sesuai. Tahun ajaran tidak dihapus.", "warn");
+  const deleted = purgeAcademicYearData(id);
+  state.selectedAcademicYearId = remainingYears[0].id;
+  localStorage.setItem(YEAR_KEY, state.selectedAcademicYearId);
+  repairDeletedReferences(state.db);
+  saveDb();
+  if (rerender) rerender();
+  else renderCrud("academic_years");
+  toast(`Tahun ajaran ${label} dihapus permanen. ${deleted.records} data absensi ikut dibersihkan.`, "ok");
+}
+
+function academicYearDeleteSummary(yearId) {
+  const classIds = new Set(state.db.classes.filter(row => row.academic_year_id === yearId).map(row => row.id));
+  const scheduleIds = new Set(state.db.schedules.filter(row => row.academic_year_id === yearId || classIds.has(row.class_id)).map(row => row.id));
+  const sessionIds = new Set(state.db.attendance_sessions.filter(row => row.academic_year_id === yearId || scheduleIds.has(row.schedule_id)).map(row => row.id));
+  const studentIds = new Set(state.db.student_class_histories.filter(row => row.academic_year_id === yearId || classIds.has(row.class_id)).map(row => row.student_id));
+  return {
+    semesters: state.db.semesters.filter(row => row.academic_year_id === yearId).length,
+    classes: classIds.size,
+    schedules: scheduleIds.size,
+    sessions: sessionIds.size,
+    records: state.db.attendance_records.filter(row => row.academic_year_id === yearId || sessionIds.has(row.session_id)).length,
+    leaves: state.db.leave_requests.filter(row => row.academic_year_id === yearId || classIds.has(row.class_id)).length,
+    rankings: state.db.rank_periods.filter(row => row.academic_year_id === yearId || classIds.has(row.class_id)).length,
+    students: studentIds.size
+  };
+}
+
+function purgeAcademicYearData(yearId) {
+  const classIds = new Set(state.db.classes.filter(row => row.academic_year_id === yearId).map(row => row.id));
+  const scheduleIds = new Set(state.db.schedules.filter(row => row.academic_year_id === yearId || classIds.has(row.class_id)).map(row => row.id));
+  const sessionIds = new Set(state.db.attendance_sessions.filter(row => row.academic_year_id === yearId || scheduleIds.has(row.schedule_id)).map(row => row.id));
+  const recordIds = new Set(state.db.attendance_records.filter(row => row.academic_year_id === yearId || sessionIds.has(row.session_id)).map(row => row.id));
+  const leaveIds = new Set(state.db.leave_requests.filter(row => row.academic_year_id === yearId || classIds.has(row.class_id)).map(row => row.id));
+  const rankPeriodIds = new Set(state.db.rank_periods.filter(row => row.academic_year_id === yearId || classIds.has(row.class_id)).map(row => row.id));
+  const studentIds = new Set(state.db.student_class_histories.filter(row => row.academic_year_id === yearId || classIds.has(row.class_id)).map(row => row.student_id));
+  state.db.academic_years = state.db.academic_years.filter(row => row.id !== yearId);
+  state.db.semesters = state.db.semesters.filter(row => row.academic_year_id !== yearId);
+  state.db.classes = state.db.classes.filter(row => row.academic_year_id !== yearId);
+  state.db.schedules = state.db.schedules.filter(row => !scheduleIds.has(row.id));
+  state.db.attendance_sessions = state.db.attendance_sessions.filter(row => !sessionIds.has(row.id));
+  state.db.attendance_records = state.db.attendance_records.filter(row => !recordIds.has(row.id));
+  state.db.attendance_logs = state.db.attendance_logs.filter(row => !recordIds.has(row.attendance_record_id));
+  state.db.leave_requests = state.db.leave_requests.filter(row => !leaveIds.has(row.id));
+  state.db.rank_periods = state.db.rank_periods.filter(row => !rankPeriodIds.has(row.id));
+  state.db.rank_results = state.db.rank_results.filter(row => !rankPeriodIds.has(row.period_id));
+  state.db.student_class_histories = state.db.student_class_histories.filter(row => row.academic_year_id !== yearId && !classIds.has(row.class_id));
+  reconcileStudentsAfterYearPurge(studentIds);
+  return { classes: classIds.size, schedules: scheduleIds.size, sessions: sessionIds.size, records: recordIds.size, leaves: leaveIds.size, rankings: rankPeriodIds.size };
+}
+
+function reconcileStudentsAfterYearPurge(studentIds) {
+  studentIds.forEach(studentId => {
+    const student = findById("students", studentId);
+    if (!student || student.deleted_at) return;
+    const activeHistory = state.db.student_class_histories
+      .filter(history => !history.deleted_at && history.student_id === student.id && history.status === "aktif")
+      .sort((a, b) => String(b.start_date || "").localeCompare(String(a.start_date || "")))[0];
+    if (activeHistory && findById("classes", activeHistory.class_id)) {
+      student.active_class_id = activeHistory.class_id;
+      student.active_academic_year_id = activeHistory.academic_year_id;
+      student.status = "aktif";
+      student.login_enabled = "true";
+      const user = state.db.users.find(row => row.student_id === student.id);
+      if (user) user.active = "true";
+      return;
+    }
+    student.active_class_id = "";
+    student.active_academic_year_id = "";
+    student.status = "keluar";
+    student.login_enabled = "false";
+    disableLinkedUser("student_id", student.id);
+  });
 }
 
 function markDeleted(row) {
@@ -6347,9 +6653,41 @@ function titleCase(value) {
 }
 
 function parseCsv(text) {
-  const lines = text.trim().split(/\r?\n/).filter(Boolean);
-  const headers = lines.shift().split(",").map(s => s.trim());
-  return lines.map(line => Object.fromEntries(line.split(",").map((v, i) => [headers[i], v.trim()])));
+  const rows = [];
+  let cell = "";
+  let row = [];
+  let quoted = false;
+  const source = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    const next = source[i + 1];
+    if (char === '"' && quoted && next === '"') {
+      cell += '"';
+      i += 1;
+      continue;
+    }
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (char === "," && !quoted) {
+      row.push(cell.trim());
+      cell = "";
+      continue;
+    }
+    if (char === "\n" && !quoted) {
+      row.push(cell.trim());
+      if (row.some(value => value !== "")) rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+  row.push(cell.trim());
+  if (row.some(value => value !== "")) rows.push(row);
+  const headers = (rows.shift() || []).map(header => header.trim());
+  return rows.map(values => Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""])));
 }
 
 function filterSelect(name, label, table) {

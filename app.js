@@ -1142,8 +1142,10 @@ function updateMobileSchoolBar() {
       <strong>${escapeHtml(schoolName)}</strong>
     </div>
     ${headmasterUnitSwitcher("mobile")}
+    ${["siswa", "wali_murid"].includes(user?.role) ? `<button type="button" class="mobile-rank-trigger" data-open-ranking-history aria-label="Riwayat Peringkat">${iconForPage("rankings")}</button>` : ""}
     ${["siswa", "guru", "wali_kelas", "kepala_sekolah"].includes(user?.role) ? `<button type="button" class="mobile-notification" data-open-notifications aria-label="Notifikasi"><b>&#128276;</b>${unread ? `<em>${unread}</em>` : ""}</button>` : ""}
   `;
+  bar.querySelector("[data-open-ranking-history]")?.addEventListener("click", openCurrentUserRankingHistory);
   bar.querySelector("[data-open-notifications]")?.addEventListener("click", openNotifications);
   bindHeadmasterUnitSwitcher(bar);
 }
@@ -1475,7 +1477,7 @@ function menuItemsForCurrentUser() {
     ["subjects", "Mapel & Jadwal", canEditMaster()],
     ["schedules", "Jadwal Pelajaran", user.role === "guru"],
     ["periods", "Periode Akademik", canEditMaster()],
-    ["rankings", "Peringkat", ["super_admin", "kepala_sekolah", "wali_kelas", "siswa", "wali_murid"].includes(user.role)],
+    ["rankings", "Peringkat", ["super_admin", "kepala_sekolah", "wali_kelas"].includes(user.role)],
     ["leave_requests", "Izin & Sakit", ["super_admin", "guru", "wali_kelas", "wali_murid"].includes(user.role)],
     ["parent_leave_requests", "Pengajuan Izin Wali", ["super_admin", "guru", "wali_kelas", "kepala_sekolah"].includes(user.role)],
     ["meetings", "Rapat", user.role === "kepala_sekolah"],
@@ -1498,8 +1500,8 @@ function mobileBarItemsForCurrentUser() {
     guru: [["dashboard", "Dashboard"], ["history", "History"], ["attendance", "Scan"], ["reports", "Laporan"]],
     wali_kelas: [["dashboard", "Dashboard"], ["history", "History"], ["rankings", "Peringkat"], ["reports", "Laporan"]],
     kepala_sekolah: [["dashboard", "Dashboard"], ["students", "Siswa"], ["meetings", "Rapat"], ["reports", "Laporan"]],
-    siswa: [["dashboard", "Dashboard"], ["history", "History"], ["my_qr", "QR"], ["rankings", "Peringkat"], ["profile", "Profil"]],
-    wali_murid: [["dashboard", "Dashboard"], ["history", "History"], ["rankings", "Peringkat"], ["leave_requests", "Izin"]]
+    siswa: [["dashboard", "Dashboard"], ["history", "History"], ["my_qr", "QR"], ["student_today", "Hari Ini"], ["profile", "Profil"]],
+    wali_murid: [["dashboard", "Dashboard"], ["history", "History"], ["leave_requests", "Izin"], ["profile", "Profil"]]
   };
   if (user.role === "siswa") return byRole.siswa.filter(([id]) => id === "my_qr" || canAccessFull(id));
   const preferred = byRole[user.role] || byRole.siswa;
@@ -1759,8 +1761,11 @@ function renderQuickTools() {
     ["reports", "Reports", "▤", canAccess("reports")],
     ["profile", "Profile", "♙", canAccess("profile")]
   ].filter(t => t[3]);
-  byId("quick-tools").innerHTML = tools.map(([page, label]) => `<button class="${state.page === page ? "active" : ""}" data-quick="${page}" title="${label}">${iconForPage(page)}<span>${label}</span></button>`).join("");
+  const rankButton = ["siswa", "wali_murid"].includes(user.role) ? `<button class="rank-icon-btn" data-open-ranking-history title="Riwayat Peringkat">${iconForPage("rankings")}<span>Peringkat</span></button>` : "";
+  byId("quick-tools").innerHTML = `${rankButton}${tools.map(([page, label]) => `<button class="${state.page === page ? "active" : ""}" data-quick="${page}" title="${label}">${iconForPage(page)}<span>${label}</span></button>`).join("")}`;
+  byId("quick-tools").querySelector("[data-open-ranking-history]")?.addEventListener("click", openCurrentUserRankingHistory);
   byId("quick-tools").querySelectorAll("button").forEach(btn => btn.onclick = () => {
+    if (btn.dataset.openRankingHistory !== undefined) return openCurrentUserRankingHistory();
     if (btn.dataset.quick === "attendance" && currentUser().role === "siswa") return showMyQr();
     navigate(btn.dataset.quick);
   });
@@ -1869,11 +1874,9 @@ function renderStudentDashboard() {
         <strong>${pct}%</strong>
         <small>${totals.total} sesi tercatat</small>
       </article>
-    </section>
-    ${latestRankCardForStudent(student.id)}`;
+    </section>`;
   bindProfileSummaryActions();
   bindStudentIdentityToggle();
-  bindRankingShortcut();
 }
 
 function parentStudent() {
@@ -1933,9 +1936,7 @@ function renderParentDashboard() {
       ${card("Alfa", totals.alfa)}
       ${card("Terlambat", totals.terlambat)}
       ${card("Kehadiran", `${percent}%`)}
-    </section>
-    ${latestRankCardForStudent(student.id, true)}`;
-  bindRankingShortcut();
+    </section>`;
 }
 
 function parentLessonTodayCard(schedule, studentId) {
@@ -2383,6 +2384,58 @@ function latestRankCardForStudent(studentId, forParent = false) {
 
 function bindRankingShortcut() {
   byId("view").querySelectorAll("[data-open-rankings]").forEach(button => button.onclick = () => navigate("rankings"));
+}
+
+function openCurrentUserRankingHistory() {
+  const user = currentUser();
+  const studentId = user.role === "wali_murid" ? user.murid_id : user.student_id;
+  if (!studentId) return toast("Riwayat peringkat hanya tersedia untuk siswa atau wali murid.", "error");
+  openRankingHistoryModal(studentId, user.role === "wali_murid");
+}
+
+function openRankingHistoryModal(studentId, forParent = false) {
+  const student = findById("students", studentId);
+  if (!student) return toast("Data siswa tidak ditemukan.", "error");
+  const history = publishedRankHistoryForStudent(student.id, forParent);
+  modal("Riwayat Peringkat", `
+    <section class="rank-history-modal">
+      <div class="rank-history-head">
+        <div>
+          <span class="eyebrow">Badge Peringkat</span>
+          <h3>${escapeHtml(student.name || "-")}</h3>
+          <p class="muted">Urutan terbaru ada di kiri. Semakin lama riwayatnya, opacity badge dibuat lebih rendah.</p>
+        </div>
+      </div>
+      ${history.length ? rankingTimeline(history) : `<div class="empty-state">Belum ada peringkat yang dipublikasikan.</div>`}
+    </section>`);
+}
+
+function rankingTimeline(history) {
+  return `<div class="rank-timeline-wrap">
+    <div class="rank-timeline">
+      ${history.map((item, index) => `${rankTimelineCard(item, index)}${index < history.length - 1 ? `<span class="rank-timeline-arrow" aria-hidden="true">›</span>` : ""}`).join("")}
+    </div>
+  </div>`;
+}
+
+function rankTimelineCard(item, index) {
+  const { result, period } = item;
+  const cls = findById("classes", period.class_id);
+  const total = rankResultsForPeriod(period.id).filter(row => row.rank).length;
+  const opacity = Math.max(0.36, 1 - index * 0.16).toFixed(2);
+  return `<article class="rank-season-card" style="--rank-opacity:${opacity}">
+    <div class="rank-season-top">
+      <strong>${escapeHtml(displayName("semesters", findById("semesters", period.semester_id)) || "-")}</strong>
+      <small>${escapeHtml(displayName("academic_years", findById("academic_years", period.academic_year_id)) || "-")}</small>
+    </div>
+    ${rankingBadge(result, "season")}
+    <div class="rank-season-copy">
+      <b>${escapeHtml(displayName("classes", cls) || "-")}</b>
+      <span>Peringkat ${escapeHtml(result.rank || "-")} dari ${total || "-"} siswa</span>
+      <small>Nilai ${escapeHtml(result.score || "-")}</small>
+      ${result.note ? `<em>${escapeHtml(result.note)}</em>` : ""}
+    </div>
+  </article>`;
 }
 
 function renderParentLeaveRequests() {

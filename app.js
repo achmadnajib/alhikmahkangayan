@@ -1738,7 +1738,8 @@ function renderDashboard() {
   const stat = s => recordsToday.filter(r => r.status === s).length;
   const sessionsThisYear = filterBySelectedAcademicYear("attendance_sessions", state.db.attendance_sessions.filter(s => !s.deleted_at));
   const schedulesThisYear = schedulesForSelectedYear(state.db.schedules.filter(s => !s.deleted_at));
-  const studentsThisYear = visibleRows("students").filter(s => s.status === "aktif");
+  const studentsThisYear = visibleRows("students");
+  const teachersActive = visibleRows("teachers");
   const classesThisYear = classesForSelectedYear();
   const activeSession = sessionsThisYear.find(s => s.date === date && s.status === "open") || sessionsThisYear.find(s => s.date === date);
   const classCount = activeSession ? studentsInClass(activeSession.class_id).length : studentsThisYear.length;
@@ -1757,7 +1758,7 @@ function renderDashboard() {
       <article class="total-card">
         <span>Total Students</span>
         <strong>${classCount}</strong>
-        <small>${activeSession ? `Session ID: #${activeSession.id.slice(-10).toUpperCase()}` : `${state.db.students.filter(s => s.status === "aktif").length} siswa aktif`}</small>
+        <small>${activeSession ? `Session ID: #${activeSession.id.slice(-10).toUpperCase()}` : `${studentsThisYear.length} siswa aktif`}</small>
       </article>
       <div class="mini-stats">
         <article><strong class="ok-text">${presentCount}</strong><span>Hadir</span></article>
@@ -1769,7 +1770,7 @@ function renderDashboard() {
     </section>
     <section class="cards desktop-only">
       ${card("Siswa Aktif", studentsThisYear.length)}
-      ${card("Guru Aktif", state.db.teachers.filter(t => t.active !== "false").length)}
+      ${card("Guru Aktif", teachersActive.length)}
       ${card("Kelas Aktif", classesThisYear.length)}
       ${card("Sesi Hari Ini", sessionsThisYear.filter(s => s.date === date).length)}
     </section>
@@ -2557,6 +2558,14 @@ function classesForSelectedYear() {
   return filterClassesForRole(state.db.classes.filter(cls => !cls.deleted_at && cls.active !== "false" && cls.status !== "lulus" && cls.academic_year_id === selectedAcademicYearId()));
 }
 
+function activeStudentsForSelectedYear(rows = state.db.students) {
+  return filterBySelectedAcademicYear("students", rows.filter(studentCanLogin));
+}
+
+function activeTeachersForDisplay(rows = state.db.teachers) {
+  return rows.filter(teacherCanLogin);
+}
+
 function recordsForSelectedYear(records = state.db.attendance_records) {
   return records.filter(record => record.academic_year_id === selectedAcademicYearId());
 }
@@ -2617,7 +2626,7 @@ function renderStudentClassOverview() {
     homeroom: displayName("teachers", findById("teachers", cls.homeroom_teacher_id))
   }).toLowerCase().includes(q));
   classes = classes.sort((a, b) => `${a.level || ""}${a.name || ""}`.localeCompare(`${b.level || ""}${b.name || ""}`));
-  const activeStudents = visibleRows("students").filter(student => student.status === "aktif");
+  const activeStudents = visibleRows("students");
   const cards = classes.map(cls => classManagementCard(cls)).join("");
   byId("view").innerHTML = `
     <section class="panel admin-workflow">
@@ -2959,6 +2968,8 @@ function visibleRows(table) {
   const user = currentUser();
   const unit = activeUnit();
   rows = filterBySelectedAcademicYear(table, rows);
+  if (table === "students") rows = rows.filter(studentCanLogin);
+  if (table === "teachers") rows = rows.filter(teacherCanLogin);
   if (table === "classes") rows = filterClassesForRole(rows);
   if (table === "classes" && user.role === "guru") {
     const classIds = new Set(state.db.schedules.filter(s => !s.deleted_at && s.teacher_id === user.teacher_id).map(s => s.class_id));
@@ -5698,7 +5709,8 @@ function filterSelect(name, label, table) {
   const selected = name === "academic_year_id" ? selectedAcademicYearId() : "";
   let rows = state.db[table].filter(r => !r.deleted_at);
   if (table === "classes" || table === "semesters") rows = filterBySelectedAcademicYear(table, rows);
-  if (table === "students") rows = filterBySelectedAcademicYear("students", rows);
+  if (table === "students") rows = activeStudentsForSelectedYear(rows);
+  if (table === "teachers") rows = activeTeachersForDisplay(rows);
   return `<select name="${name}"><option value="">${label}</option>${rows.map(r => `<option value="${r.id}" ${selected === r.id ? "selected" : ""}>${escapeHtml(table === "classes" ? classSimpleLabel(r) : displayName(table, r))}</option>`).join("")}</select>`;
 }
 
@@ -5758,7 +5770,7 @@ function reportRowsForFilter(name, table) {
   }
   if (table === "teachers") {
     const ids = new Set(schedules.map(schedule => schedule.teacher_id));
-    return state.db.teachers.filter(teacher => !teacher.deleted_at && ids.has(teacher.id)).sort((a, b) => displayName("teachers", a).localeCompare(displayName("teachers", b)));
+    return activeTeachersForDisplay(state.db.teachers).filter(teacher => ids.has(teacher.id)).sort((a, b) => displayName("teachers", a).localeCompare(displayName("teachers", b)));
   }
   if (table === "students") {
     const unitClassIds = new Set(classesForSelectedYear().filter(cls => !unit || classUnit(cls) === unit).map(cls => cls.id));
@@ -5767,7 +5779,7 @@ function reportRowsForFilter(name, table) {
     const classIds = filters.class_id
       ? new Set([filters.class_id])
       : shouldLimitBySchedule ? scheduledClassIds : unitClassIds;
-    return visibleRows("students")
+    return activeStudentsForSelectedYear(visibleRows("students"))
       .filter(student => classIds.has(student.active_class_id))
       .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
   }
@@ -5777,7 +5789,7 @@ function reportRowsForFilter(name, table) {
 function studentsInClass(classId) {
   const histories = state.db.student_class_histories.filter(h => h.class_id === classId && h.status === "aktif");
   const ids = new Set(histories.map(h => h.student_id));
-  return state.db.students.filter(s => !s.deleted_at && s.status === "aktif" && (s.active_class_id === classId || ids.has(s.id)));
+  return state.db.students.filter(s => studentCanLogin(s) && (s.active_class_id === classId || ids.has(s.id)));
 }
 function accessibleLeaveClasses() {
   const user = currentUser();

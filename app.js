@@ -756,13 +756,13 @@ function loadSession() { return JSON.parse(localStorage.getItem(SESSION_KEY) || 
 function saveSession(session) { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); state.session = session; }
 function validateStoredSession(session) {
   if (session?.role === "wali_murid") {
-    const student = state.db.students.find(item => item.id === session.murid_id && !item.deleted_at && item.status === "aktif");
+    const student = state.db.students.find(item => item.id === session.murid_id && studentCanLogin(item));
     if (student) return { ...session, nama_siswa: student.name };
     localStorage.removeItem(SESSION_KEY);
     return null;
   }
   if (!session?.userId) return null;
-  const user = state.db.users.find(item => item.id === session.userId && item.active !== "false");
+  const user = state.db.users.find(item => item.id === session.userId && !item.deleted_at && item.active !== "false");
   if (!user || !roles[session.role || user.role] || !canLoginAsRole(user, session.role || user.role) || !linkedLoginTargetActive(user)) {
     localStorage.removeItem(SESSION_KEY);
     return null;
@@ -774,12 +774,32 @@ function linkedLoginTargetActive(user) {
   if (!user || user.deleted_at || user.active === "false") return false;
   if (user.student_id) {
     const student = findById("students", user.student_id);
-    return !!student && !student.deleted_at && student.status === "aktif" && student.login_enabled !== "false";
+    return studentCanLogin(student);
   }
   if (user.teacher_id) {
     const teacher = findById("teachers", user.teacher_id);
-    return !!teacher && !teacher.deleted_at && teacher.active !== "false" && teacher.login_enabled !== "false";
+    return teacherCanLogin(teacher);
   }
+  return true;
+}
+
+function studentCanLogin(student) {
+  return !!student && !student.deleted_at && student.status === "aktif" && student.login_enabled !== "false";
+}
+
+function teacherCanLogin(teacher) {
+  return !!teacher && !teacher.deleted_at && teacher.active !== "false" && teacher.login_enabled !== "false";
+}
+
+function ensureSessionStillValid() {
+  if (!state.session) return false;
+  const valid = validateStoredSession(state.session);
+  if (!valid) {
+    logoutApp();
+    toast("Data login sudah tidak aktif atau sudah dihapus.", "error");
+    return false;
+  }
+  state.session = valid;
   return true;
 }
 function now() { return new Date().toISOString(); }
@@ -878,12 +898,13 @@ function handleParentLogin(identifier) {
 function findStudentsByParentLogin(identifier) {
   const value = String(identifier || "").trim().toLowerCase().replace(/\s+/g, " ");
   if (!value) return [];
-  const activeStudents = state.db.students.filter(student => !student.deleted_at && student.status !== "keluar");
+  const activeStudents = state.db.students.filter(studentCanLogin);
   const exact = activeStudents.filter(student => String(student.name || "").trim().toLowerCase().replace(/\s+/g, " ") === value);
   return exact.length ? exact : activeStudents.filter(student => String(student.name || "").toLowerCase().includes(value));
 }
 
 function loginAsParent(student) {
+  if (!studentCanLogin(student)) return toast("Data siswa sudah tidak aktif atau sudah dihapus.", "error");
   state.page = "dashboard";
   saveSession({
     role: "wali_murid",
@@ -936,15 +957,15 @@ function findLoginUser(role, identifier) {
     ) || null;
   }
   if (role === "siswa") {
-    const student = state.db.students.find(s => !s.deleted_at && s.status === "aktif" && s.login_enabled !== "false" && [s.nisn, s.nis].some(item => String(item || "").toLowerCase() === value));
+    const student = state.db.students.find(s => studentCanLogin(s) && [s.nisn, s.nis].some(item => String(item || "").toLowerCase() === value));
     const user = student ? state.db.users.find(u => !u.deleted_at && u.active !== "false" && u.student_id === student.id) : null;
     return user && linkedLoginTargetActive(user) ? user : null;
   }
   if (["guru", "wali_kelas", "kepala_sekolah"].includes(role)) {
     if (role === "kepala_sekolah" && value.includes("@")) {
-      return state.db.users.find(u => u.role === "super_admin" && u.email?.toLowerCase() === value) || null;
+      return state.db.users.find(u => u.role === "super_admin" && !u.deleted_at && u.active !== "false" && u.email?.toLowerCase() === value) || null;
     }
-    const teacher = state.db.teachers.find(t => teacherIdentityMatches(t, value) && !t.deleted_at && t.active !== "false" && t.login_enabled !== "false");
+    const teacher = state.db.teachers.find(t => teacherIdentityMatches(t, value) && teacherCanLogin(t));
     if (!teacher) return null;
     const linkedUsers = state.db.users.filter(u => !u.deleted_at && u.active !== "false" && u.teacher_id === teacher.id);
     const linked = linkedUsers.find(u => u.role === role) || linkedUsers[0] || null;
@@ -973,7 +994,7 @@ function canLoginAsRole(user, role) {
   if (user.role === role) return true;
   if (user.teacher_id && ["guru", "wali_kelas"].includes(role)) {
     const teacher = findById("teachers", user.teacher_id);
-    if (!teacher || teacher.deleted_at || teacher.active === "false") return false;
+    if (!teacherCanLogin(teacher)) return false;
     if (role === "wali_kelas") return teacher.is_homeroom === "true" || state.db.classes.some(cls => !cls.deleted_at && cls.homeroom_teacher_id === teacher.id);
     return state.db.schedules.some(schedule => !schedule.deleted_at && schedule.teacher_id === teacher.id);
   }
@@ -1033,10 +1054,12 @@ function showLogin() {
   applySchoolBrand();
 }
 function showApp() {
+  if (!ensureSessionStillValid()) return;
   byId("auth").classList.add("hidden");
   byId("app").classList.remove("hidden");
   applySchoolBrand();
   const user = currentUser();
+  if (!user) return logoutApp();
   byId("active-user").textContent = user.name;
   byId("active-role").textContent = roles[user.role];
   updateMobileSchoolBar();
@@ -1274,17 +1297,18 @@ function notificationItemHtml(notification) {
 function currentUser() {
   if (state.session?.role === "wali_murid") {
     const student = findById("students", state.session.murid_id);
+    if (!studentCanLogin(student)) return null;
     return {
       id: `wali_${state.session.murid_id}`,
       name: parentNameForStudent(student) || `Wali ${student?.name || "Murid"}`,
       role: "wali_murid",
       student_id: state.session.murid_id,
       murid_id: state.session.murid_id,
-      active: student && !student.deleted_at ? "true" : "false"
+      active: "true"
     };
   }
   const user = state.db.users.find(u => u.id === state.session?.userId);
-  if (!user) return user;
+  if (!linkedLoginTargetActive(user)) return null;
   return state.session?.role && user.role !== state.session.role ? { ...user, original_role: user.role, role: state.session.role } : user;
 }
 function landingPageForRole(role) {
@@ -1435,6 +1459,7 @@ function canAccessPeriodChild(page) {
 }
 
 function navigate(page, options = {}) {
+  if (!ensureSessionStillValid()) return;
   stopCamera();
   if (page !== "my_qr" && byId("modal-backdrop")) closeModal({ fromPopState: true });
   if (page === "my_qr") return showMyQr();

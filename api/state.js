@@ -6,7 +6,8 @@ const REQUIRED_TABLES = [
   "users", "roles", "permissions", "students", "student_class_histories", "teachers",
   "classes", "subjects", "schedules", "academic_years", "semesters",
   "attendance_sessions", "attendance_records", "leave_requests", "attendance_logs",
-  "holidays", "lesson_hours", "settings", "notifications", "meetings"
+  "holidays", "lesson_hours", "settings", "notifications", "meetings",
+  "rank_periods", "rank_results"
 ];
 
 function connectionString() {

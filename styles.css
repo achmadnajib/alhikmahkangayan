@@ -2220,6 +2220,157 @@ tbody tr:hover td {
   }
 }
 
+.ranking-workflow .class-management-card,
+.ranking-class-card {
+  gap: 18px;
+}
+
+.ranking-input-table input {
+  width: 100%;
+  min-width: 110px;
+}
+
+.ranking-input-table td:nth-child(2) strong {
+  display: block;
+}
+
+.ranking-input-table td:nth-child(2) small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.ranking-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  padding: 14px 0 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0), var(--surface) 28%);
+}
+
+.rank-badge {
+  --rank-accent: #111111;
+  display: inline-grid;
+  place-items: center;
+  min-width: 86px;
+  min-height: 72px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--rank-accent) 28%, var(--line));
+  border-radius: 18px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--rank-accent) 8%, #ffffff), #ffffff 56%);
+  color: #121212;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, .08);
+  text-align: center;
+}
+
+.rank-badge strong {
+  font-family: var(--display-font);
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.rank-badge small {
+  margin-top: 7px;
+  color: #555;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.rank-badge.mini {
+  min-width: 68px;
+  min-height: 52px;
+  padding: 8px 10px;
+  border-radius: 14px;
+}
+
+.rank-badge.mini strong { font-size: 20px; }
+.rank-badge.mini small { font-size: 8px; }
+
+.rank-badge.large {
+  min-width: 132px;
+  min-height: 116px;
+  border-radius: 26px;
+}
+
+.rank-badge.large strong { font-size: 48px; }
+.rank-badge.gold { --rank-accent: #b8860b; }
+.rank-badge.silver { --rank-accent: #7d8590; }
+.rank-badge.bronze { --rank-accent: #a55a2a; }
+.rank-badge.top { --rank-accent: #2563eb; }
+.rank-badge.base { --rank-accent: #111111; }
+
+.rank-hero-card {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: linear-gradient(135deg, #ffffff, #fbfaf6);
+}
+
+.rank-hero-card h3 {
+  margin: 0 0 8px;
+  font-size: clamp(24px, 4vw, 42px);
+}
+
+.rank-hero-card p,
+.rank-hero-card small {
+  display: block;
+  margin: 0 0 10px;
+  color: var(--muted);
+}
+
+.rank-history-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.rank-history-card {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: #fff;
+}
+
+.rank-history-card div {
+  display: grid;
+  gap: 4px;
+}
+
+.rank-history-card span,
+.rank-history-card small,
+.rank-history-card p {
+  color: var(--muted);
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .rank-hero-card {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 18px;
+  }
+
+  .rank-history-card {
+    align-items: flex-start;
+  }
+
+  .rank-badge.large {
+    min-width: 104px;
+    min-height: 92px;
+  }
+
+  .rank-badge.large strong { font-size: 38px; }
+}
+
 /* Final Design System Pass */
 :root {
   --surface: #ffffff;

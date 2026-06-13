@@ -2453,7 +2453,7 @@ function openRankingHistoryModal(studentId, forParent = false) {
 function rankingTimeline(history) {
   return `<div class="rank-timeline-wrap">
     <div class="rank-timeline">
-      ${history.map((item, index) => `${rankTimelineCard(item, index)}${index < history.length - 1 ? `<span class="rank-timeline-arrow" aria-hidden="true">›</span>` : ""}`).join("")}
+      ${history.map((item, index) => `${rankTimelineCard(item, index)}${index < history.length - 1 ? `<span class="rank-timeline-arrow" aria-hidden="true">‹</span>` : ""}`).join("")}
     </div>
   </div>`;
 }

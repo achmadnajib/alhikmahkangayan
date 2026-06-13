@@ -202,7 +202,7 @@ const schemas = {
   }
 };
 
-const state = { db: null, session: null, page: "dashboard", filters: {}, selectedAcademicYearId: "", videoStream: null, remoteDb: false, saveTimer: null, notificationTimer: null, modalHistoryOpen: false };
+const state = { db: null, session: null, page: "dashboard", filters: {}, selectedAcademicYearId: "", videoStream: null, remoteDb: false, remoteRevision: 0, remoteUpdatedAt: "", remoteSyncing: false, lastRemoteSync: 0, saveTimer: null, notificationTimer: null, modalHistoryOpen: false };
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -364,6 +364,8 @@ async function loadDb() {
     if (response.ok) {
       state.remoteDb = true;
       const payload = await response.json();
+      state.remoteRevision = Number(payload.revision || 0);
+      state.remoteUpdatedAt = payload.updated_at || "";
       const localRaw = localStorage.getItem(DB_KEY);
       const sourceDb = payload.db || (localRaw ? JSON.parse(localRaw) : emptyDb());
       const beforeNormalize = JSON.stringify(sourceDb);
@@ -409,7 +411,8 @@ function removeNonAdminEmails(db) {
 
 function repairDeletedReferences(db) {
   db.students.forEach(student => {
-    if (student.deleted_at || student.status !== "aktif" || student.login_enabled === "false") {
+    const hasValidPlacement = studentHasActivePlacement(student, db);
+    if (student.deleted_at || student.status !== "aktif" || student.login_enabled === "false" || !hasValidPlacement) {
       student.login_enabled = "false";
       db.users.filter(user => user.student_id === student.id).forEach(user => {
         user.active = "false";
@@ -454,6 +457,21 @@ function repairDeletedReferences(db) {
       session.updated_at ||= now();
     });
   });
+}
+
+function studentHasActivePlacement(student, db = state.db) {
+  if (!student || !db) return false;
+  const cls = db.classes?.find(item => item.id === student.active_class_id);
+  if (!cls || cls.deleted_at || cls.active === "false" || cls.status === "lulus") return false;
+  if (student.active_academic_year_id && cls.academic_year_id !== student.active_academic_year_id) return false;
+  return db.student_class_histories?.some(history =>
+    !history.deleted_at &&
+    history.student_id === student.id &&
+    history.class_id === cls.id &&
+    history.academic_year_id === cls.academic_year_id &&
+    history.semester_id === cls.semester_id &&
+    history.status === "aktif"
+  );
 }
 
 function normalizeLeaveRequests(db) {
@@ -747,6 +765,9 @@ async function persistRemoteDb(db) {
       body: JSON.stringify({ db })
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json().catch(() => ({}));
+    state.remoteRevision = Number(payload.revision || state.remoteRevision || 0);
+    state.remoteUpdatedAt = payload.updated_at || state.remoteUpdatedAt || "";
   } catch (error) {
     console.error("Gagal menyimpan ke database online.", error);
     toast("Database online gagal disimpan. Cek konfigurasi Vercel/Postgres.", "error");
@@ -784,7 +805,7 @@ function linkedLoginTargetActive(user) {
 }
 
 function studentCanLogin(student) {
-  return !!student && !student.deleted_at && student.status === "aktif" && student.login_enabled !== "false";
+  return !!student && !student.deleted_at && student.status === "aktif" && student.login_enabled !== "false" && studentHasActivePlacement(student);
 }
 
 function teacherCanLogin(teacher) {
@@ -1005,6 +1026,9 @@ function bindShell() {
   byId("logout").onclick = logoutApp;
   byId("menu-toggle").onclick = () => document.querySelector(".sidebar").classList.toggle("open");
   window.addEventListener("popstate", handleAppBack);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshRemoteDbForAccess({ force: true });
+  });
   let lastMobileState = isMobileViewport();
   window.addEventListener("resize", () => {
     const nextMobileState = isMobileViewport();
@@ -1161,6 +1185,7 @@ function startNotificationEngine() {
 
 function runNotificationJobs() {
   if (!state.db || !state.session) return;
+  refreshRemoteDbForAccess();
   const user = currentUser();
   if (!user) return;
   autoClosePastOpenSessions();
@@ -1168,6 +1193,42 @@ function runNotificationJobs() {
   createLeaveNotificationsForUser(user);
   createMeetingNotificationsForUser(user);
   updateMobileSchoolBar();
+}
+
+async function refreshRemoteDbForAccess({ force = false } = {}) {
+  if (!state.remoteDb || state.remoteSyncing) return;
+  const time = Date.now();
+  if (!force && time - state.lastRemoteSync < 10_000) return;
+  state.lastRemoteSync = time;
+  state.remoteSyncing = true;
+  try {
+    const response = await fetch("/api/state", { cache: "no-store" });
+    if (!response.ok) return;
+    const payload = await response.json();
+    const revision = Number(payload.revision || 0);
+    const updatedAt = payload.updated_at || "";
+    if (!payload.db || (revision === state.remoteRevision && updatedAt === state.remoteUpdatedAt)) return;
+    const currentPage = state.page;
+    state.db = normalizeDb(payload.db);
+    state.remoteRevision = revision;
+    state.remoteUpdatedAt = updatedAt;
+    localStorage.setItem(DB_KEY, JSON.stringify(state.db));
+    state.selectedAcademicYearId = resolveStoredAcademicYearId();
+    if (state.session && !validateStoredSession(state.session)) {
+      logoutApp();
+      toast("Data login sudah tidak ada di data aktif. Silakan hubungi Administrator.", "error");
+      return;
+    }
+    if (state.session && !byId("modal-backdrop")) {
+      state.page = currentPage;
+      renderMenu();
+      navigate(currentPage, { replaceHistory: true });
+    }
+  } catch (error) {
+    console.warn("Gagal menyinkronkan database online.", error);
+  } finally {
+    state.remoteSyncing = false;
+  }
 }
 
 function autoClosePastOpenSessions() {

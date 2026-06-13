@@ -2959,6 +2959,15 @@ function openForm(table, row = null, defaults = {}, options = {}) {
     if (table === "meetings") {
       renderMeetings();
     }
+    if (table === "academic_years" && wasNew) {
+      const summary = rolloverAcademicYear(savedRow.id);
+      state.selectedAcademicYearId = savedRow.id;
+      localStorage.setItem(YEAR_KEY, savedRow.id);
+      saveDb();
+      renderCrud("academic_years");
+      toast(`Tahun ajaran baru disinkronkan: ${summary.classes} kelas, ${summary.promoted} siswa naik, ${summary.graduated} siswa lulus.`, "ok");
+      return;
+    }
     if (table === "classes" && wasNew) {
       openClassStudents(savedRow.id);
       toast("Kelas baru dibuat. Silakan pilih siswa untuk kelas ini.", "ok");
@@ -4626,6 +4635,199 @@ function createClassForSemester(source, semesterId) {
   };
   state.db.classes.push(record);
   return record;
+}
+
+function rolloverAcademicYear(newYearId) {
+  const newYear = findById("academic_years", newYearId);
+  const sourceYear = findPreviousAcademicYear(newYear);
+  if (!newYear || !sourceYear) return { classes: 0, promoted: 0, graduated: 0, schedules: 0 };
+  const semesters = ensureYearSemesters(newYear);
+  const ganjil = semesters.find(semester => /ganjil/i.test(semester.name)) || semesters[0];
+  if (!ganjil) return { classes: 0, promoted: 0, graduated: 0, schedules: 0 };
+  const sourceSemester = sourceClosingSemester(sourceYear.id);
+  const sourceClasses = state.db.classes.filter(cls =>
+    !cls.deleted_at &&
+    cls.active !== "false" &&
+    cls.status !== "lulus" &&
+    cls.academic_year_id === sourceYear.id &&
+    (!sourceSemester || cls.semester_id === sourceSemester.id)
+  );
+  const classMap = new Map();
+  let classCount = 0;
+  let promoted = 0;
+  let graduated = 0;
+  let schedules = 0;
+
+  sourceClasses.forEach(source => {
+    const entryClass = ensureRolloverClass(source, ganjil, entryLevelForUnit(classUnit(source)), classMap);
+    if (entryClass?._createdThisRun) classCount += 1;
+    const nextLevel = nextLevelForUnit(classUnit(source), classLevelValue(source));
+    if (!nextLevel) {
+      graduated += graduateStudentsFromSourceClass(source);
+      return;
+    }
+    const target = ensureRolloverClass(source, ganjil, nextLevel, classMap);
+    if (target._createdThisRun) classCount += 1;
+    promoted += promoteStudentsToNewYearClass(source.id, target.id);
+    schedules += copySchedulesForRollover(source.id, target.id, newYear.id, ganjil.id);
+  });
+
+  sourceClasses.forEach(source => {
+    if (classLevelValue(source) !== entryLevelForUnit(classUnit(source))) return;
+    const entry = ensureRolloverClass(source, ganjil, entryLevelForUnit(classUnit(source)), classMap);
+    schedules += copySchedulesForRollover(source.id, entry.id, newYear.id, ganjil.id);
+  });
+
+  [...classMap.values()].forEach(cls => delete cls._createdThisRun);
+  return { classes: classCount, promoted, graduated, schedules };
+}
+
+function findPreviousAcademicYear(newYear) {
+  return state.db.academic_years
+    .filter(year => !year.deleted_at && year.id !== newYear?.id)
+    .sort((a, b) => String(b.start_date || b.name || "").localeCompare(String(a.start_date || a.name || "")))
+    .find(year => String(year.start_date || "") <= String(newYear?.start_date || "9999-99-99")) ||
+    state.db.academic_years.find(year => !year.deleted_at && year.id !== newYear?.id);
+}
+
+function ensureYearSemesters(year) {
+  const yearStart = new Date(year.start_date || `${new Date().getFullYear()}-07-01`);
+  const yearEnd = new Date(year.end_date || `${yearStart.getFullYear() + 1}-06-30`);
+  const genapStart = new Date(yearStart);
+  genapStart.setMonth(yearStart.getMonth() + 6);
+  const ganjilEnd = new Date(genapStart);
+  ganjilEnd.setDate(ganjilEnd.getDate() - 1);
+  [
+    ["Ganjil", dateIso(yearStart), dateIso(ganjilEnd), "true"],
+    ["Genap", dateIso(genapStart), dateIso(yearEnd), "false"]
+  ].forEach(([name, startDate, endDate, active]) => {
+    if (state.db.semesters.some(semester => !semester.deleted_at && semester.academic_year_id === year.id && String(semester.name || "").toLowerCase() === name.toLowerCase())) return;
+    state.db.semesters.push({ id: uid("sem"), academic_year_id: year.id, name, start_date: startDate, end_date: endDate, is_active: active, created_at: now(), updated_at: now(), created_by: currentUser().id });
+  });
+  return state.db.semesters.filter(semester => !semester.deleted_at && semester.academic_year_id === year.id);
+}
+
+function sourceClosingSemester(yearId) {
+  const semesters = state.db.semesters.filter(semester => !semester.deleted_at && semester.academic_year_id === yearId);
+  return semesters.find(semester => /genap/i.test(semester.name)) || semesters.sort((a, b) => String(b.end_date || "").localeCompare(String(a.end_date || "")))[0] || null;
+}
+
+function ensureRolloverClass(source, semester, level, classMap) {
+  if (!level) return null;
+  const unit = classUnit(source);
+  const key = [unit, level, source.major || "", semester.academic_year_id].join("|");
+  if (classMap.has(key)) return classMap.get(key);
+  let cls = state.db.classes.find(item =>
+    !item.deleted_at &&
+    item.academic_year_id === semester.academic_year_id &&
+    item.semester_id === semester.id &&
+    classUnit(item) === unit &&
+    classLevelValue(item) === String(level) &&
+    (item.major || "") === (source.major || "")
+  );
+  if (!cls) {
+    cls = {
+      id: uid("cla"),
+      name: rolloverClassName(source, level),
+      unit,
+      level: String(level),
+      major: source.major || "",
+      academic_year_id: semester.academic_year_id,
+      semester_id: semester.id,
+      homeroom_teacher_id: source.homeroom_teacher_id || "",
+      active: "true",
+      status: "aktif",
+      created_at: now(),
+      updated_at: now(),
+      created_by: currentUser().id,
+      _createdThisRun: true
+    };
+    state.db.classes.push(cls);
+  }
+  classMap.set(key, cls);
+  return cls;
+}
+
+function rolloverClassName(source, level) {
+  const unit = classUnit(source);
+  const oldName = String(source.name || "").trim();
+  const oldLevel = classLevelValue(source);
+  const suffix = (oldName.match(/[A-Z]$/i) || [""])[0];
+  if (/^\d+[A-Z]?$/i.test(oldName)) return `${level}${suffix && !String(level).endsWith(suffix) ? suffix : ""}`;
+  if (oldLevel && oldName.includes(oldLevel)) return oldName.replace(oldLevel, String(level));
+  return `Kelas ${displayLevelForUnit(unit, level)}${suffix && !/^[IVXLCDM]$/i.test(suffix) ? suffix : ""}`;
+}
+
+function displayLevelForUnit(unit, level) {
+  if (unit === "PAUD") return "PAUD";
+  if (unit === "SMP") return { 7: "I", 8: "II", 9: "III" }[level] || level;
+  if (unit === "SMA") return { 10: "X", 11: "XI", 12: "XII" }[level] || level;
+  return String(level);
+}
+
+function entryLevelForUnit(unit) {
+  if (unit === "PAUD") return "PAUD";
+  if (unit === "MI") return "1";
+  if (unit === "SMP") return "7";
+  if (unit === "SMA") return "10";
+  return "";
+}
+
+function nextLevelForUnit(unit, level) {
+  if (unit === "PAUD") return null;
+  const current = Number(level);
+  const max = unit === "MI" ? 6 : unit === "SMP" ? 9 : unit === "SMA" ? 12 : 12;
+  if (!Number.isFinite(current) || current >= max) return null;
+  return String(current + 1);
+}
+
+function promoteStudentsToNewYearClass(fromClassId, toClassId) {
+  const students = studentsInClass(fromClassId);
+  students.forEach(student => moveStudentToClass(student, toClassId));
+  return students.length;
+}
+
+function graduateStudentsFromSourceClass(source) {
+  const students = studentsInClass(source.id);
+  students.forEach(student => {
+    student.status = "lulus";
+    student.login_enabled = "false";
+    student.updated_at = now();
+    disableLinkedUser("student_id", student.id);
+    state.db.student_class_histories.forEach(history => {
+      if (history.student_id === student.id && history.class_id === source.id && history.status === "aktif") {
+        history.status = "lulus";
+        history.end_date = history.end_date || today();
+        history.updated_at = now();
+      }
+    });
+  });
+  return students.length;
+}
+
+function copySchedulesForRollover(sourceClassId, targetClassId, academicYearId, semesterId) {
+  let copied = 0;
+  state.db.schedules.filter(schedule => !schedule.deleted_at && schedule.class_id === sourceClassId).forEach(schedule => {
+    const exists = state.db.schedules.some(item =>
+      !item.deleted_at &&
+      item.class_id === targetClassId &&
+      item.academic_year_id === academicYearId &&
+      item.semester_id === semesterId &&
+      item.subject_id === schedule.subject_id &&
+      item.teacher_id === schedule.teacher_id &&
+      item.day === schedule.day &&
+      item.start_time === schedule.start_time &&
+      item.end_time === schedule.end_time
+    );
+    if (exists) return;
+    state.db.schedules.push({ id: uid("sch"), academic_year_id: academicYearId, semester_id: semesterId, class_id: targetClassId, subject_id: schedule.subject_id, teacher_id: schedule.teacher_id, day: schedule.day, start_time: schedule.start_time, end_time: schedule.end_time, room: schedule.room || "", active: schedule.active || "true", created_at: now(), updated_at: now(), created_by: currentUser().id });
+    copied += 1;
+  });
+  return copied;
+}
+
+function dateIso(date) {
+  return new Date(date).toISOString().slice(0, 10);
 }
 
 function openPromote() {
